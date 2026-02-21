@@ -1,0 +1,14 @@
+{
+  "source_type": "JOB_STD_JD_CSV_20250901",
+  "dry_run": false,
+  "csv_path": "/Users/orca/Downloads/한국고용정보원_구인표준직무기술서_20250901.csv",
+  "encoding_used": "euc-kr",
+  "total_rows": 5,
+  "prepared_rows": 5,
+  "success_rows": 5,
+  "inserted_rows": 5,
+  "updated_rows": 0,
+  "failed_rows": 0,
+  "duration_sec": 6.22,
+  "failures": []
+}
