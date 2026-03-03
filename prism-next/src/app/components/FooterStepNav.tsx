@@ -37,7 +37,14 @@ export function FooterStepNav({
   const handleNext = async () => {
     if (!next && !isLast) return;
     const ok = (await onBeforeNext?.()) ?? true;
-    if (ok && next) router.push(next.path);
+    if (!ok) return;
+    if (next) {
+      router.push(next.path);
+      return;
+    }
+    if (isLast) {
+      router.push('/report');
+    }
   };
 
   return (

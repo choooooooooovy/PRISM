@@ -27,16 +27,11 @@ export interface Phase1StructuredSummary {
   };
 }
 
-function compactList(items?: string[], maxItems = 3): string {
-  if (!items?.length) return '아직 정리된 내용이 없습니다.';
+function compactList(items?: string[]): string {
+  if (!items?.length) return '';
   const trimmed = items.map(v => v.trim()).filter(Boolean);
-  if (!trimmed.length) return '아직 정리된 내용이 없습니다.';
-  const sliced = trimmed.slice(0, maxItems);
-  const extra = trimmed.length - sliced.length;
-  if (extra > 0) {
-    return `${sliced.join(', ')} 외 ${extra}개`;
-  }
-  return sliced.join(', ');
+  if (!trimmed.length) return '';
+  return trimmed.join(', ');
 }
 
 export function toInterviewSummarySections(
@@ -67,17 +62,17 @@ export function toInterviewSummarySections(
         { label: '가치', text: compactList(summary?.values) },
         { label: '흥미', text: compactList(summary?.interests) },
         { label: '기술', text: compactList(summary?.skills) },
-        { label: '직업적 관심', text: compactList(summary?.occupational_interests) },
+        { label: '직업적 흥미', text: compactList(summary?.occupational_interests) },
       ],
     },
     {
       id: 'decision',
       title: '의사결정 특징',
       items: [
-        { label: '의사결정 방식', text: summary?.decision_style?.trim() || '아직 정리된 내용이 없습니다.' },
-        { label: '자기 대화', text: summary?.metacognition?.self_talk?.trim() || '아직 정리된 내용이 없습니다.' },
-        { label: '자기 인식', text: summary?.metacognition?.self_awareness?.trim() || '아직 정리된 내용이 없습니다.' },
-        { label: '조절 전략', text: summary?.metacognition?.control_and_monitoring?.trim() || '아직 정리된 내용이 없습니다.' },
+        { label: '의사결정 방식', text: summary?.decision_style?.trim() || '' },
+        { label: '자기 대화', text: summary?.metacognition?.self_talk?.trim() || '' },
+        { label: '자기 인식', text: summary?.metacognition?.self_awareness?.trim() || '' },
+        { label: '조절 전략', text: summary?.metacognition?.control_and_monitoring?.trim() || '' },
       ],
     },
   ];

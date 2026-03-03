@@ -1,294 +1,150 @@
 import React from 'react';
 import { Layout } from '../components/Layout';
 import { FooterStepNav } from '../components/FooterStepNav';
-import { getLatestArtifact, runTask } from '@/lib/backend';
-import { DndProvider, useDrag, useDrop } from 'react-dnd';
-import { HTML5Backend } from 'react-dnd-html5-backend';
-import { GripVertical, Info } from 'lucide-react';
+import { getLatestArtifact, getUserErrorMessage, runTask, upsertArtifact } from '@/lib/backend';
+import { buildPersonaTaglineMap } from '@/lib/personaTagline';
+import { getPersonaStyle } from '@/lib/personaStyle';
+import { CheckCircle2, RotateCcw } from 'lucide-react';
 
-/* ─── Types ─── */
-interface Alternative {
-  id: string;
+type Perspective = 'self' | 'others';
+
+interface VoteItem {
+  persona_id: string;
+  display_name: string;
+  rank: number;
+}
+
+interface VoteAlternative {
+  alternative_id: string;
   title: string;
-  description: string;
-  personaVotes: { persona: string; rank: number }[];
+  persona_votes: VoteItem[];
 }
 
-interface Priority {
-  first: string | null;
-  second: string | null;
+interface PersonaChoice {
+  persona_id: string;
+  display_name: string;
+  selected_alternative_id: string;
+  rationale?: string;
 }
 
-const INITIAL_ALTERNATIVES: Alternative[] = [
-  {
-    id: '1',
-    title: 'UX 디자이너',
-    description: '사용자 경험 설계·리서치·프로토타이핑',
-    personaVotes: [
-      { persona: 'A', rank: 1 },
-      { persona: 'B', rank: 2 },
-      { persona: 'C', rank: 2 },
-    ],
-  },
-  {
-    id: '2',
-    title: '제품 기획자',
-    description: '신규 서비스 기획·전략·로드맵 수립',
-    personaVotes: [
-      { persona: 'A', rank: 2 },
-      { persona: 'B', rank: 1 },
-      { persona: 'C', rank: 3 },
-    ],
-  },
-  {
-    id: '3',
-    title: '프론트엔드 개발자',
-    description: '웹/앱 UI 구현·성능 최적화',
-    personaVotes: [
-      { persona: 'A', rank: 3 },
-      { persona: 'B', rank: 3 },
-      { persona: 'C', rank: 1 },
-    ],
-  },
-];
+interface MatrixCell {
+  perspective: Perspective;
+  benefits: string;
+  costs: string;
+}
 
-const ITEM_TYPE = 'ALTERNATIVE';
-
-/* ─── Draggable Card ─── */
-function DraggableAlternativeCard({
-  alt,
-  index,
-  total,
-  moveCard,
-  priority,
-  setPriority,
-}: {
-  alt: Alternative;
-  index: number;
-  total: number;
-  moveCard: (fromIndex: number, toIndex: number) => void;
-  priority: Priority;
-  setPriority: React.Dispatch<React.SetStateAction<Priority>>;
-}) {
-  const ref = React.useRef<HTMLDivElement>(null);
-  const handleRef = React.useRef<HTMLDivElement>(null);
-
-  const [{ isOver }, drop] = useDrop<{ index: number }, void, { isOver: boolean }>({
-    accept: ITEM_TYPE,
-    collect: monitor => ({ isOver: monitor.isOver() }),
-    hover(item) {
-      if (!ref.current) return;
-      if (item.index === index) return;
-      moveCard(item.index, index);
-      item.index = index;
-    },
-  });
-
-  const [{ isDragging }, drag, preview] = useDrag({
-    type: ITEM_TYPE,
-    item: () => ({ index }),
-    collect: monitor => ({ isDragging: monitor.isDragging() }),
-  });
-
-  // Attach drop to the card, drag to the handle
-  preview(drop(ref));
-  drag(handleRef);
-
-  const isFirst = priority.first === alt.id;
-  const isSecond = priority.second === alt.id;
-
-  const handleSelect = (rank: '1' | '2') => {
-    setPriority(prev => {
-      if (rank === '1') {
-        if (prev.first === alt.id) return { ...prev, first: null };
-        return {
-          first: alt.id,
-          second: prev.second === alt.id ? null : prev.second,
-        };
-      } else {
-        if (prev.second === alt.id) return { ...prev, second: null };
-        return {
-          second: alt.id,
-          first: prev.first === alt.id ? null : prev.first,
-        };
-      }
-    });
+interface MatrixAlternative {
+  alternative_id: string;
+  alternative_title: string;
+  cells: MatrixCell[];
+  perspective_summaries?: {
+    self?: string;
+    others?: string;
   };
-
-  const rankLabel = isFirst ? '1순위' : isSecond ? '2순위' : null;
-  const rankColor = isFirst ? 'var(--color-accent)' : '#7C3AED';
-
-  return (
-    <div
-      ref={ref}
-      style={{
-        opacity: isDragging ? 0.35 : 1,
-        backgroundColor: isOver ? '#1E1E2A' : 'var(--color-bg-card)',
-        border: isFirst
-          ? '2px solid var(--color-accent)'
-          : isSecond
-          ? '2px solid #7C3AED'
-          : '1px solid var(--color-border)',
-        borderRadius: '12px',
-        marginBottom: '10px',
-        boxShadow: isDragging ? '0 12px 32px rgba(0,0,0,0.5)' : 'var(--shadow-card)',
-        transition: 'border-color 0.15s, background-color 0.15s',
-        userSelect: 'none',
-      }}
-    >
-      <div className="flex items-center gap-3 px-5 py-4">
-        {/* Position number */}
-        <div
-          className="flex items-center justify-center w-8 h-8 rounded-full flex-shrink-0 text-[14px]"
-          style={{
-            backgroundColor: isFirst
-              ? 'var(--color-accent)'
-              : isSecond
-              ? '#7C3AED'
-              : 'var(--color-bg-surface)',
-            color: isFirst || isSecond ? '#fff' : 'var(--color-text-secondary)',
-            fontWeight: 700,
-            transition: 'background-color 0.15s',
-          }}
-        >
-          {index + 1}
-        </div>
-
-        {/* Drag handle */}
-        <div
-          ref={handleRef}
-          className="flex flex-col items-center justify-center cursor-grab active:cursor-grabbing p-1.5 rounded-md transition-colors"
-          title="드래그하여 순서 변경"
-          style={{ color: 'var(--color-text-secondary)' }}
-          onMouseEnter={e =>
-            (e.currentTarget.style.backgroundColor = 'var(--color-bg-surface)')
-          }
-          onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-        >
-          <GripVertical
-            className="w-5 h-5"
-            style={{ strokeWidth: 1.5 }}
-          />
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <span
-              className="text-[17px]"
-              style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}
-            >
-              {alt.title}
-            </span>
-            {rankLabel && (
-              <span
-                className="text-[11px] px-2 py-0.5 rounded-full"
-                style={{
-                  backgroundColor: `${rankColor}20`,
-                  color: rankColor,
-                  border: `1px solid ${rankColor}40`,
-                  fontWeight: 600,
-                }}
-              >
-                {rankLabel} 선택됨
-              </span>
-            )}
-          </div>
-          <p className="text-[13px]" style={{ color: 'var(--color-text-secondary)' }}>
-            {alt.description}
-          </p>
-          {/* Persona vote reference labels */}
-          <div className="flex gap-2 mt-2">
-            {alt.personaVotes.map(v => (
-              <span
-                key={v.persona}
-                className="text-[11px] px-2 py-0.5 rounded"
-                style={{
-                  backgroundColor: 'var(--color-bg-surface)',
-                  color: 'var(--color-text-secondary)',
-                  border: '1px solid var(--color-border)',
-                }}
-                title="페르소나 참고 순위"
-              >
-                페르소나 {v.persona}: {v.rank}순위
-              </span>
-            ))}
-          </div>
-        </div>
-
-        {/* Priority buttons */}
-        <div className="flex gap-2 flex-shrink-0">
-          <button
-            onClick={() => handleSelect('1')}
-            className="px-3 py-2 rounded-lg text-[13px] transition-all"
-            style={{
-              backgroundColor: isFirst ? 'var(--color-accent)' : 'var(--color-bg-surface)',
-              color: isFirst ? '#fff' : 'var(--color-text-secondary)',
-              border: isFirst ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
-              fontWeight: isFirst ? 600 : 400,
-              minWidth: '72px',
-            }}
-          >
-            {isFirst ? '✓ 1순위' : '1순위'}
-          </button>
-          <button
-            onClick={() => handleSelect('2')}
-            className="px-3 py-2 rounded-lg text-[13px] transition-all"
-            style={{
-              backgroundColor: isSecond ? '#7C3AED' : 'var(--color-bg-surface)',
-              color: isSecond ? '#fff' : 'var(--color-text-secondary)',
-              border: isSecond ? '2px solid #7C3AED' : '1px solid var(--color-border)',
-              fontWeight: isSecond ? 600 : 400,
-              minWidth: '72px',
-            }}
-          >
-            {isSecond ? '✓ 2순위' : '2순위'}
-          </button>
-        </div>
-      </div>
-
-      {/* Drop indicator */}
-      {isOver && !isDragging && (
-        <div
-          className="h-0.5 mx-5 mb-2 rounded-full"
-          style={{ backgroundColor: 'var(--color-accent)' }}
-        />
-      )}
-    </div>
-  );
 }
 
-/* ─── Main Component ─── */
-function Phase3_2Inner() {
-  const [alternatives, setAlternatives] = React.useState<Alternative[]>(INITIAL_ALTERNATIVES);
-  const [priority, setPriority] = React.useState<Priority>({ first: null, second: null });
-  const [isSubmittingNext, setIsSubmittingNext] = React.useState(false);
+interface ExploreCard {
+  job_title: string;
+  tasks: string;
+  work_environment: string;
+  outlook_salary: string;
+}
+
+interface PerspectiveSummaries {
+  self: string;
+  others: string;
+}
+
+const PERSPECTIVE_LABEL: Record<Perspective, string> = {
+  self: '자신',
+  others: '주요 타인',
+};
+
+export default function Phase3_2Prioritization() {
+  const [alternatives, setAlternatives] = React.useState<VoteAlternative[]>([]);
+  const [personaChoices, setPersonaChoices] = React.useState<PersonaChoice[]>([]);
+  const [matrixByAlt, setMatrixByAlt] = React.useState<Record<string, MatrixCell[]>>({});
+  const [summaryByAlt, setSummaryByAlt] = React.useState<Record<string, string>>({});
+  const [perspectiveSummaryByAlt, setPerspectiveSummaryByAlt] = React.useState<Record<string, PerspectiveSummaries>>({});
+  const [exploreByAlt, setExploreByAlt] = React.useState<
+    Record<string, { tasks: string; environment: string; outlook: string }>
+  >({});
+  const [selectedIds, setSelectedIds] = React.useState<string[]>([]);
+  const [finalChoiceId, setFinalChoiceId] = React.useState<string | null>(null);
+  const [compareMode, setCompareMode] = React.useState(false);
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [errorMessage, setErrorMessage] = React.useState('');
+  const [personaTaglineById, setPersonaTaglineById] = React.useState<Record<string, string>>({});
 
   React.useEffect(() => {
     let mounted = true;
     const load = async () => {
       try {
-        const artifact = await getLatestArtifact<{
-          alternatives?: Array<{
-            alternative_id: string;
-            title: string;
-            persona_votes: Array<{ persona_id: string; display_name: string; rank: number }>;
-          }>;
-        }>('phase3_votes');
-        if (!artifact?.alternatives?.length || !mounted) return;
-        setAlternatives(
-          artifact.alternatives.map(item => ({
-            id: item.alternative_id,
-            title: item.title,
-            description: '',
-            personaVotes: item.persona_votes.map(v => ({
-              persona: v.display_name || v.persona_id,
-              rank: v.rank,
-            })),
-          })),
-        );
+        const [votesArtifact, matrixArtifact, candidatesArtifact, exploreArtifact, personasArtifact] = await Promise.all([
+          getLatestArtifact<{ alternatives?: VoteAlternative[]; persona_choices?: PersonaChoice[] }>('phase3_votes'),
+          getLatestArtifact<{ alternatives?: MatrixAlternative[] }>('phase3_decision_matrix'),
+          getLatestArtifact<{ unified_candidates?: Array<{ id: string; title: string; summary: string }> }>('phase2_candidates'),
+          getLatestArtifact<{ persona_results?: Array<{ cards: ExploreCard[] }> }>('phase2_explore_cards'),
+          getLatestArtifact<{
+            personas?: Array<{
+              persona_id: string;
+              identity_summary?: string;
+              core_career_values?: string;
+              risk_challenge_orientation?: string;
+              information_processing_style?: string;
+              proactive_agency?: string;
+            }>;
+          }>('phase1_personas'),
+        ]);
+        if (!mounted) return;
+        setPersonaTaglineById(buildPersonaTaglineMap(personasArtifact?.personas || []));
+
+        const voteAlts = votesArtifact?.alternatives || [];
+        setAlternatives(voteAlts);
+        setPersonaChoices(votesArtifact?.persona_choices || []);
+
+        const matrixMap: Record<string, MatrixCell[]> = {};
+        const matrixSummaryMap: Record<string, string> = {};
+        const perspectiveSummaryMap: Record<string, PerspectiveSummaries> = {};
+        (matrixArtifact?.alternatives || []).forEach(item => {
+          matrixMap[item.alternative_id] = item.cells || [];
+          const selfSummary = item.perspective_summaries?.self?.trim() || '';
+          const othersSummary = item.perspective_summaries?.others?.trim() || '';
+          const merged = [selfSummary, othersSummary].filter(Boolean).join(' / ');
+          if (merged) matrixSummaryMap[item.alternative_id] = merged;
+          perspectiveSummaryMap[item.alternative_id] = {
+            self: selfSummary,
+            others: othersSummary,
+          };
+        });
+        setMatrixByAlt(matrixMap);
+        setPerspectiveSummaryByAlt(perspectiveSummaryMap);
+
+        const summaryMap: Record<string, string> = {};
+        (candidatesArtifact?.unified_candidates || []).forEach(item => {
+          summaryMap[item.id] = item.summary;
+        });
+        Object.entries(matrixSummaryMap).forEach(([key, value]) => {
+          summaryMap[key] = value;
+        });
+        setSummaryByAlt(summaryMap);
+
+        const exploreFlat = (exploreArtifact?.persona_results || []).flatMap(r => r.cards || []);
+        const exploreMap: Record<string, { tasks: string; environment: string; outlook: string }> = {};
+        voteAlts.forEach(alt => {
+          const match = exploreFlat.find(card => card.job_title === alt.title);
+          if (match) {
+            exploreMap[alt.alternative_id] = {
+              tasks: match.tasks,
+              environment: match.work_environment,
+              outlook: match.outlook_salary,
+            };
+          }
+        });
+        setExploreByAlt(exploreMap);
       } catch {
-        // Keep fallback votes.
+        if (!mounted) return;
+        setAlternatives([]);
       }
     };
     load();
@@ -297,30 +153,54 @@ function Phase3_2Inner() {
     };
   }, []);
 
-  const moveCard = React.useCallback((fromIndex: number, toIndex: number) => {
-    setAlternatives(prev => {
-      const updated = [...prev];
-      const [moved] = updated.splice(fromIndex, 1);
-      updated.splice(toIndex, 0, moved);
-      return updated;
+  const toggleAlternative = (alternativeId: string) => {
+    setSelectedIds(prev => {
+      if (prev.includes(alternativeId)) {
+        const next = prev.filter(id => id !== alternativeId);
+        if (finalChoiceId === alternativeId) setFinalChoiceId(null);
+        return next;
+      }
+      if (prev.length >= 2) return prev;
+      return [...prev, alternativeId];
     });
-  }, []);
+  };
 
-  const isConfirmReady = priority.first !== null && priority.second !== null;
-  const firstAlt = alternatives.find(a => a.id === priority.first);
-  const secondAlt = alternatives.find(a => a.id === priority.second);
+  const selectedAlternatives = selectedIds
+    .map(id => alternatives.find(alt => alt.alternative_id === id))
+    .filter((value): value is VoteAlternative => Boolean(value));
+
+  const showCompareOnly = compareMode;
+  const personaPickByAlt = React.useMemo(() => {
+    const map: Record<string, Array<{ persona_id: string; display_name: string }>> = {};
+    alternatives.forEach(alt => {
+      map[alt.alternative_id] = alt.persona_votes
+        .filter(vote => vote.rank <= 2)
+        .map(vote => ({ persona_id: vote.persona_id, display_name: vote.display_name }));
+    });
+    return map;
+  }, [alternatives]);
+
+  const toFallbackPerspectiveSummary = (altId: string, perspective: Perspective): string => {
+    const cells = matrixByAlt[altId] || [];
+    const cell = cells.find(item => item.perspective === perspective);
+    const benefits = (cell?.benefits || '').trim();
+    const costs = (cell?.costs || '').trim();
+    const lines: string[] = [];
+    if (benefits) lines.push(`Benefit: ${benefits}`);
+    if (costs) lines.push(`Cost: ${costs}`);
+    return lines.join('\n');
+  };
 
   return (
     <Layout>
       <div className="flex-1 overflow-y-auto p-8" style={{ marginLeft: '260px' }}>
-        <div className="max-w-4xl mx-auto">
-          {/* ── Header ── */}
-          <div className="mb-8">
+        <div className="max-w-5xl mx-auto">
+          <div className="mb-6">
             <span className="text-[13px] mb-1 block" style={{ color: 'var(--color-accent)' }}>
               Phase 3: 우선순위 결정
             </span>
             <h1 className="mb-3" style={{ color: 'var(--color-text-primary)' }}>
-              우선순위 확정
+              최종 2개 대안 선택 및 비교
             </h1>
             <div
               className="p-4 rounded-lg"
@@ -330,175 +210,255 @@ function Phase3_2Inner() {
                 이번 단계에서 할 일
               </p>
               <p className="text-[14px] leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
-                대안을 드래그해서 순서를 정한 뒤, 최종 1·2순위만 선택하세요.<br />
-                카드 오른쪽 버튼으로 1순위·2순위를 각각 1개씩 선택합니다. 페르소나 참고 순위는 참고용입니다.
+                먼저 대안 2개를 고른 뒤, 두 대안을 나란히 비교해 최종 1개를 선택하세요.
               </p>
             </div>
           </div>
 
-          {/* ── Drag-and-drop list ── */}
-          <div className="mb-6">
-            <div className="flex items-center gap-2 mb-3">
-              <GripVertical
-                className="w-4 h-4"
-                style={{ color: 'var(--color-text-secondary)', strokeWidth: 1.5 }}
-              />
-              <span className="text-[13px]" style={{ color: 'var(--color-text-secondary)' }}>
-                핸들을 잡고 드래그하면 순서를 바꿀 수 있습니다
-              </span>
+          {errorMessage && (
+            <div
+              className="mb-4 px-4 py-3 rounded-lg text-[13px]"
+              style={{
+                backgroundColor: 'rgba(239,68,68,0.1)',
+                border: '1px solid rgba(239,68,68,0.35)',
+                color: 'var(--color-text-primary)',
+              }}
+            >
+              {errorMessage}
             </div>
-            {alternatives.map((alt, index) => (
-              <DraggableAlternativeCard
-                key={alt.id}
-                alt={alt}
-                index={index}
-                total={alternatives.length}
-                moveCard={moveCard}
-                priority={priority}
-                setPriority={setPriority}
-              />
-            ))}
-          </div>
+          )}
 
-          {/* ── Selection summary ── */}
-          <div
-            className="p-5 rounded-xl mb-8"
-            style={{
-              backgroundColor: 'var(--color-bg-card)',
-              border: isConfirmReady
-                ? '1px solid rgba(34,197,94,0.4)'
-                : '1px solid var(--color-border)',
-            }}
-          >
-            <h3 className="text-[15px] mb-4" style={{ color: 'var(--color-text-primary)' }}>
-              최종 선택 현황
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-              {/* 1st priority */}
-              <div
-                className="flex items-center gap-3 p-3.5 rounded-lg"
-                style={{
-                  backgroundColor: 'var(--color-bg-surface)',
-                  border: `1px solid ${firstAlt ? 'rgba(255,31,86,0.3)' : 'var(--color-border)'}`,
-                }}
-              >
-                <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{
-                    backgroundColor: firstAlt ? 'var(--color-accent)' : 'var(--color-bg-card)',
-                    color: firstAlt ? '#fff' : 'var(--color-text-secondary)',
-                    fontWeight: 700,
-                    fontSize: '14px',
-                  }}
-                >
-                  1
-                </div>
-                <div>
-                  <span
-                    className="text-[12px] block"
-                    style={{ color: 'var(--color-text-secondary)' }}
-                  >
-                    1순위
-                  </span>
-                  <span
-                    className="text-[15px]"
+          {!showCompareOnly && (
+            <div className="space-y-4 mb-6">
+              {alternatives.map(alt => {
+                const isSelected = selectedIds.includes(alt.alternative_id);
+                const pickedBy = personaPickByAlt[alt.alternative_id] || [];
+                const explore = exploreByAlt[alt.alternative_id];
+                return (
+                  <button
+                    key={alt.alternative_id}
+                    type="button"
+                    onClick={() => toggleAlternative(alt.alternative_id)}
+                    className="w-full text-left p-5 rounded-xl"
                     style={{
-                      color: firstAlt ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-                      fontWeight: firstAlt ? 500 : 400,
+                      backgroundColor: 'var(--color-bg-card)',
+                      border: isSelected ? '1.5px solid var(--color-accent)' : '1px solid var(--color-border)',
                     }}
                   >
-                    {firstAlt ? firstAlt.title : '미선택'}
-                  </span>
-                </div>
-              </div>
-
-              {/* 2nd priority */}
-              <div
-                className="flex items-center gap-3 p-3.5 rounded-lg"
-                style={{
-                  backgroundColor: 'var(--color-bg-surface)',
-                  border: `1px solid ${secondAlt ? 'rgba(124,58,237,0.3)' : 'var(--color-border)'}`,
-                }}
-              >
-                <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-                  style={{
-                    backgroundColor: secondAlt ? '#7C3AED' : 'var(--color-bg-card)',
-                    color: secondAlt ? '#fff' : 'var(--color-text-secondary)',
-                    fontWeight: 700,
-                    fontSize: '14px',
-                  }}
-                >
-                  2
-                </div>
-                <div>
-                  <span
-                    className="text-[12px] block"
-                    style={{ color: 'var(--color-text-secondary)' }}
-                  >
-                    2순위
-                  </span>
-                  <span
-                    className="text-[15px]"
-                    style={{
-                      color: secondAlt
-                        ? 'var(--color-text-primary)'
-                        : 'var(--color-text-secondary)',
-                      fontWeight: secondAlt ? 500 : 400,
-                    }}
-                  >
-                    {secondAlt ? secondAlt.title : '미선택'}
-                  </span>
-                </div>
-              </div>
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <h3 className="text-[18px]" style={{ color: 'var(--color-text-primary)', lineHeight: 1.45 }}>{alt.title}</h3>
+                      {isSelected && <CheckCircle2 className="w-4 h-4" style={{ color: 'var(--color-accent)' }} />}
+                    </div>
+                    <p className="text-[14px] leading-relaxed" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.75 }}>
+                      {summaryByAlt[alt.alternative_id] || '이 대안의 핵심 특징을 비교해보세요.'}
+                    </p>
+                    {explore && (
+                      <div className="mt-3 text-[13px] leading-relaxed" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.72 }}>
+                        <div><b style={{ color: 'var(--color-text-primary)' }}>하는 일:</b> {explore.tasks}</div>
+                        <div><b style={{ color: 'var(--color-text-primary)' }}>근무 환경:</b> {explore.environment}</div>
+                      </div>
+                    )}
+                    <div className="mt-4">
+                      <p className="text-[12px] mb-1.5" style={{ color: 'var(--color-text-secondary)', fontWeight: 600 }}>
+                        해당 대안을 선택한 페르소나
+                      </p>
+                      <div className="flex flex-wrap gap-2.5">
+                        {pickedBy.map(choice => {
+                          const style = getPersonaStyle(choice.persona_id, choice.display_name);
+                          return (
+                            <div
+                              key={`${alt.alternative_id}-${choice.persona_id}-line`}
+                              className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-lg"
+                              style={{
+                                backgroundColor: style.softBg,
+                                border: `1px solid ${style.border}`,
+                              }}
+                            >
+                              <span
+                                className="text-[11px] px-1.5 py-0.5 rounded-full"
+                                style={{
+                                  backgroundColor: 'rgba(0,0,0,0.18)',
+                                  color: style.accent,
+                                  border: `1px solid ${style.border}`,
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {style.badge}
+                              </span>
+                              <span className="text-[12px]" style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>
+                                {choice.display_name}
+                              </span>
+                              {personaTaglineById[choice.persona_id] && (
+                                <span
+                                  className="text-[11px]"
+                                  style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}
+                                >
+                                  {personaTaglineById[choice.persona_id]}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
-            {!isConfirmReady && (
-              <p
-                className="text-[12px] mt-3"
-                style={{ color: 'var(--color-text-secondary)' }}
-              >
-                1순위 1개 + 2순위 1개를 모두 선택해야 다음 단계로 진행할 수 있습니다.
-              </p>
-            )}
-          </div>
+          )}
+
+          {showCompareOnly && (
+            <>
+              <div className="flex items-center justify-between mb-4">
+                <h2 style={{ color: 'var(--color-text-primary)' }}>선택된 2개 대안 비교</h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCompareMode(false);
+                    setFinalChoiceId(null);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-[12px]"
+                  style={{ backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text-secondary)' }}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> 다시 선택
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-5 mb-6">
+                {selectedAlternatives.map(alt => {
+                  const explore = exploreByAlt[alt.alternative_id];
+                  const isFinal = finalChoiceId === alt.alternative_id;
+                  return (
+                    <div
+                      key={`compare-${alt.alternative_id}`}
+                      className="p-5 rounded-xl"
+                      style={{ backgroundColor: 'var(--color-bg-card)', border: isFinal ? '1.5px solid var(--color-accent)' : '1px solid var(--color-border)' }}
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="flex-1 min-w-0">
+                          <h3 className="text-[18px]" style={{ color: 'var(--color-text-primary)', lineHeight: 1.42 }}>{alt.title}</h3>
+                          <p className="text-[14px] mt-1 leading-relaxed" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.72 }}>
+                            {summaryByAlt[alt.alternative_id] || '요약 정보'}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setFinalChoiceId(alt.alternative_id)}
+                          className="px-4 py-2 rounded-lg text-[13px] whitespace-nowrap self-start"
+                          style={{
+                            backgroundColor: isFinal ? 'var(--color-accent)' : 'var(--color-bg-surface)',
+                            color: isFinal ? '#fff' : 'var(--color-text-secondary)',
+                            border: isFinal ? 'none' : '1px solid var(--color-border)',
+                          }}
+                        >
+                          {isFinal ? '최종 선택됨' : '최종 선택'}
+                        </button>
+                      </div>
+
+                      {explore && (
+                        <div className="mb-4 text-[13px] leading-relaxed" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.72 }}>
+                          <div><b style={{ color: 'var(--color-text-primary)' }}>하는 일:</b> {explore.tasks}</div>
+                          <div><b style={{ color: 'var(--color-text-primary)' }}>근무 환경:</b> {explore.environment}</div>
+                          <div><b style={{ color: 'var(--color-text-primary)' }}>전망:</b> {explore.outlook}</div>
+                        </div>
+                      )}
+
+                      <div className="space-y-4">
+                        {(['self', 'others'] as Perspective[]).map(perspective => (
+                          <div
+                            key={`${alt.alternative_id}-${perspective}`}
+                            className="p-4 rounded-lg"
+                            style={{ backgroundColor: 'var(--color-bg-surface)', border: '1px solid var(--color-border)' }}
+                          >
+                            <p className="text-[13px] mb-1.5" style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>
+                              {PERSPECTIVE_LABEL[perspective]}
+                            </p>
+                            <p className="text-[13px] leading-relaxed whitespace-pre-line" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.78 }}>
+                              {perspectiveSummaryByAlt[alt.alternative_id]?.[perspective] ||
+                                toFallbackPerspectiveSummary(alt.alternative_id, perspective) ||
+                                '요약 정보가 없습니다.'}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
 
           <FooterStepNav
-            className="flex justify-between gap-3"
-            nextDisabled={!isConfirmReady || isSubmittingNext}
+            className="flex justify-between"
+            nextLabel={showCompareOnly ? '다음 단계' : '비교하기'}
+            nextDisabled={
+              isSubmitting ||
+              (!showCompareOnly && selectedIds.length !== 2) ||
+              (showCompareOnly && !finalChoiceId)
+            }
             onBeforeNext={async () => {
-              setIsSubmittingNext(true);
+              if (!showCompareOnly) {
+                if (selectedIds.length !== 2) {
+                  setErrorMessage('먼저 비교할 대안 2개를 선택해 주세요.');
+                  return false;
+                }
+                setErrorMessage('');
+                setCompareMode(true);
+                return false;
+              }
+              if (!finalChoiceId) return false;
+              setErrorMessage('');
+              setIsSubmitting(true);
               try {
+                const first = alternatives.find(alt => alt.alternative_id === finalChoiceId);
+                const second = selectedAlternatives.find(alt => alt.alternative_id !== finalChoiceId);
+                if (!first || !second) return false;
+
+                const selectedPayload = {
+                  selected_alternative_ids: [first.alternative_id, second.alternative_id],
+                  final_choice_id: first.alternative_id,
+                  alternatives: [first, second],
+                  persona_choices: personaChoices,
+                  matrix: {
+                    [first.alternative_id]: matrixByAlt[first.alternative_id] || [],
+                    [second.alternative_id]: matrixByAlt[second.alternative_id] || [],
+                  },
+                };
+
+                await upsertArtifact({
+                  phase: 'phase3',
+                  step: '3-2',
+                  artifactType: 'phase3_final_selection',
+                  payload: selectedPayload as Record<string, unknown>,
+                });
+
                 await runTask('phase4_generate_preparation', {
                   votes: {
-                    alternatives: alternatives.map(alt => ({
-                      alternative_id: alt.id,
-                      title: alt.title,
-                      persona_votes: alt.personaVotes.map(v => ({
-                        persona_id: v.persona,
-                        display_name: v.persona,
-                        rank: v.rank,
-                      })),
-                    })),
-                    selected_priority: priority,
+                    alternatives: [
+                      {
+                        alternative_id: first.alternative_id,
+                        title: first.title,
+                        persona_votes: first.persona_votes,
+                      },
+                      {
+                        alternative_id: second.alternative_id,
+                        title: second.title,
+                        persona_votes: second.persona_votes,
+                      },
+                    ],
+                    persona_choices: personaChoices,
                   },
                 });
                 return true;
+              } catch (error) {
+                setErrorMessage(getUserErrorMessage(error, '다음 단계로 이동하지 못했습니다.'));
+                return false;
               } finally {
-                setIsSubmittingNext(false);
+                setIsSubmitting(false);
               }
             }}
           />
         </div>
       </div>
-      {/* Right panel OFF */}
     </Layout>
-  );
-}
-
-export default function Phase3_2PriorityConfirmation() {
-  return (
-    <DndProvider backend={HTML5Backend}>
-      <Phase3_2Inner />
-    </DndProvider>
   );
 }

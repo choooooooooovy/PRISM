@@ -2,7 +2,11 @@
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.trim() || 'http://127.0.0.1:8000';
-const SESSION_STORAGE_KEY = 'prism_session_id';
+
+// Keep session only in runtime memory.
+// On full page reload, module state resets and a new session is created.
+let inMemorySessionId: string | null = null;
+let sessionInitPromise: Promise<string> | null = null;
 
 interface SessionResponse {
   id: string;
@@ -101,25 +105,27 @@ export async function getOrCreateSessionId(): Promise<string> {
     throw new Error('Session can only be resolved on the client');
   }
 
-  const existing = window.localStorage.getItem(SESSION_STORAGE_KEY);
-  if (existing) {
-    try {
-      await request<SessionDetailResponse>(`/sessions/${existing}`);
-      return existing;
-    } catch (err) {
-      if (!(err instanceof ApiError) || err.info.status !== 404) {
-        throw err;
-      }
-      window.localStorage.removeItem(SESSION_STORAGE_KEY);
-    }
+  if (inMemorySessionId) {
+    return inMemorySessionId;
+  }
+  if (sessionInitPromise) {
+    return sessionInitPromise;
   }
 
-  const session = await request<SessionResponse>('/sessions', {
-    method: 'POST',
-    body: JSON.stringify({ title: 'PRISM Session' }),
-  });
-  window.localStorage.setItem(SESSION_STORAGE_KEY, session.id);
-  return session.id;
+  sessionInitPromise = (async () => {
+    const session = await request<SessionResponse>('/sessions', {
+      method: 'POST',
+      body: JSON.stringify({ title: 'PRISM Session' }),
+    });
+    inMemorySessionId = session.id;
+    return session.id;
+  })();
+
+  try {
+    return await sessionInitPromise;
+  } finally {
+    sessionInitPromise = null;
+  }
 }
 
 export async function runTask(
@@ -128,6 +134,7 @@ export async function runTask(
     | 'phase1_extract_structured'
     | 'phase1_generate_personas'
     | 'phase2_explore'
+    | 'phase2_explore_chat_turn'
     | 'phase2_generate_candidates'
     | 'phase3_generate_comments_and_drafts'
     | 'phase3_generate_votes'
@@ -205,7 +212,7 @@ export function getUserErrorMessage(error: unknown, fallback: string): string {
   }
   if (error instanceof Error && error.message) {
     if (/failed to fetch/i.test(error.message)) {
-      return '백엔드 서버에 연결할 수 없습니다. 백엔드를 실행한 뒤 다시 시도해 주세요.';
+      return `백엔드 요청에 실패했습니다. 서버 실행 상태/CORS/API 주소를 확인해 주세요. (API: ${API_BASE_URL})`;
     }
     return error.message;
   }

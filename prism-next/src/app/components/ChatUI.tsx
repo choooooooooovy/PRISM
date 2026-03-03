@@ -22,6 +22,19 @@ export function ChatUI({
   sendLabel = '전송',
 }: ChatUIProps) {
   const [input, setInput] = React.useState('');
+  const messagesEndRef = React.useRef<HTMLDivElement | null>(null);
+  const inputRef = React.useRef<HTMLTextAreaElement | null>(null);
+
+  React.useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages]);
+
+  React.useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = '0px';
+    el.style.height = `${Math.min(el.scrollHeight, 168)}px`;
+  }, [input]);
 
   const handleSend = () => {
     if (disabled) return;
@@ -31,7 +44,7 @@ export function ChatUI({
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -61,22 +74,26 @@ export function ChatUI({
             </div>
           </div>
         ))}
+        <div ref={messagesEndRef} />
       </div>
       
-      <div className="flex gap-2">
-        <input
-          type="text"
+      <div className="flex gap-2 items-end">
+        <textarea
+          ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyPress={handleKeyPress}
+          onKeyDown={handleKeyDown}
           placeholder={placeholder}
           disabled={disabled}
-          className="flex-1 px-4 py-3 rounded-lg text-[14px]"
+          rows={1}
+          className="flex-1 px-4 py-3 rounded-lg text-[14px] leading-relaxed"
           style={{
             backgroundColor: 'var(--color-bg-card)',
             border: '1px solid var(--color-border)',
             color: 'var(--color-text-primary)',
             opacity: disabled ? 0.75 : 1,
+            resize: 'none',
+            overflowY: 'auto',
           }}
         />
         <button

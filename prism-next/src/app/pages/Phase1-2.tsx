@@ -4,7 +4,8 @@ import { InterviewSummaryPanel } from '../components/InterviewSummaryPanel';
 import { FooterStepNav } from '../components/FooterStepNav';
 import { Phase1StructuredSummary, toInterviewSummarySections } from '@/lib/interviewSummary';
 import { getLatestArtifact } from '@/lib/backend';
-import { User, Sparkles } from 'lucide-react';
+import { getPersonaStyle } from '@/lib/personaStyle';
+import { Sparkles } from 'lucide-react';
 
 interface PersonaData {
   id: 'p1' | 'p2' | 'p3';
@@ -24,7 +25,7 @@ export default function Phase1_2PersonaGeneration() {
     const load = async () => {
       setIsLoading(true);
       try {
-        const [personasArtifact, structuredArtifact] = await Promise.all([
+        const [personasArtifact, confirmedSummary, structuredSummary] = await Promise.all([
           getLatestArtifact<{
             personas?: Array<{
               persona_id: 'p1' | 'p2' | 'p3';
@@ -36,11 +37,12 @@ export default function Phase1_2PersonaGeneration() {
               proactive_agency: string;
             }>;
           }>('phase1_personas'),
+          getLatestArtifact<Phase1StructuredSummary>('phase1_structured_confirmed'),
           getLatestArtifact<Phase1StructuredSummary>('phase1_structured'),
         ]);
         if (!mounted) return;
 
-        setSummary(structuredArtifact);
+        setSummary(confirmedSummary || structuredSummary);
 
         const mapped: PersonaData[] = (personasArtifact?.personas || []).map(p => ({
           id: p.persona_id,
@@ -58,9 +60,7 @@ export default function Phase1_2PersonaGeneration() {
         if (!mounted) return;
         setPersonas([]);
       } finally {
-        if (mounted) {
-          setIsLoading(false);
-        }
+        if (mounted) setIsLoading(false);
       }
     };
 
@@ -72,18 +72,10 @@ export default function Phase1_2PersonaGeneration() {
 
   return (
     <Layout>
-      {/* ── Center: read-only persona cards ── */}
-      <div
-        className="flex-1 overflow-y-auto p-8"
-        style={{ marginLeft: '260px', marginRight: '360px' }}
-      >
+      <div className="flex-1 overflow-y-auto p-8" style={{ marginLeft: '260px', marginRight: '360px' }}>
         <div className="max-w-3xl mx-auto">
-          {/* Header + instruction */}
           <div className="mb-8">
-            <span
-              className="text-[13px] mb-1 block"
-              style={{ color: 'var(--color-accent)' }}
-            >
+            <span className="text-[13px] mb-1 block" style={{ color: 'var(--color-accent)' }}>
               Phase 1: 자기 이해
             </span>
             <h1 className="mb-3" style={{ color: 'var(--color-text-primary)' }}>
@@ -96,31 +88,23 @@ export default function Phase1_2PersonaGeneration() {
                 border: '1px solid var(--color-border)',
               }}
             >
-              <p
-                className="text-[14px] mb-1"
-                style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}
-              >
+              <p className="text-[14px] mb-1" style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}>
                 이번 단계에서 할 일
               </p>
-              <p
-                className="text-[14px] leading-relaxed"
-                style={{ color: 'var(--color-text-secondary)' }}
-              >
-                입력된 자기이해 내용을 바탕으로 3개의 관점(페르소나)이 생성되었습니다.<br />
-                각 페르소나가 대표하는 기준을 확인하고 다음 단계로 넘어가세요.
+              <p className="text-[14px] leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
+                인터뷰와 수정 요약을 바탕으로 3개의 관점이 생성되었습니다.
+                <br />
+                각 페르소나의 핵심 관점을 확인하고 다음 단계로 넘어가세요.
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 mb-5">
-            <Sparkles
-              className="w-5 h-5"
-              style={{ color: 'var(--color-accent)', strokeWidth: 1.5 }}
-            />
+            <Sparkles className="w-5 h-5" style={{ color: 'var(--color-accent)', strokeWidth: 1.5 }} />
             <h2 style={{ color: 'var(--color-text-primary)' }}>생성된 탐색 관점</h2>
           </div>
 
-          <div className="space-y-5">
+          <div className="space-y-6">
             {isLoading && (
               <div
                 className="p-6 rounded-xl text-[14px]"
@@ -142,73 +126,72 @@ export default function Phase1_2PersonaGeneration() {
                   color: 'var(--color-text-secondary)',
                 }}
               >
-                아직 생성된 페르소나가 없습니다. Phase 1-1에서 인터뷰를 진행한 뒤 다음 단계로 이동해 주세요.
+                아직 생성된 페르소나가 없습니다. Phase 1-1 인터뷰를 완료해 주세요.
               </div>
             )}
-            {personas.map((p, idx) => (
-              <div
-                key={p.id}
-                className="p-6 rounded-xl"
-                style={{
-                  backgroundColor: 'var(--color-bg-card)',
-                  border: '1px solid var(--color-border)',
-                  boxShadow: 'var(--shadow-card)',
-                }}
-              >
-                {/* Card header */}
-                <div className="flex items-center gap-3 mb-3">
-                  <div
-                    className="w-10 h-10 rounded-full flex items-center justify-center"
-                    style={{ backgroundColor: 'rgba(255,255,255,0.05)' }}
-                  >
-                    <User
-                      className="w-5 h-5"
-                      style={{ color: 'var(--color-accent)', strokeWidth: 1.5 }}
-                    />
-                  </div>
-                  <div>
-                    <h3 className="text-[18px]" style={{ color: 'var(--color-text-primary)' }}>
-                      {p.name}
-                      <span
-                        className="text-[13px] ml-2"
-                        style={{ color: 'var(--color-text-secondary)', fontWeight: 400 }}
-                      >
-                        관점 {idx + 1}
-                      </span>
-                    </h3>
-                    <p className="text-[14px]" style={{ color: 'var(--color-accent)' }}>
-                      {p.identity}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Attributes */}
-                <div className="space-y-2.5">
-                  {p.attributes.map(attr => (
-                    <div key={attr.label} className="flex items-start gap-3">
-                      <span
-                        className="text-[12px] px-2 py-0.5 rounded flex-shrink-0 mt-0.5"
-                        style={{
-                          backgroundColor: 'rgba(255,255,255,0.04)',
-                          color: 'var(--color-text-secondary)',
-                          border: '1px solid var(--color-border)',
-                          minWidth: '168px',
-                        }}
-                      >
-                        {attr.label}
-                      </span>
-                      <span
-                        className="text-[13px] leading-relaxed"
-                        style={{ color: 'var(--color-text-primary)' }}
-                      >
-                        {attr.value}
-                      </span>
+            {personas.map((p, idx) => {
+              const style = getPersonaStyle(p.id, p.name, idx);
+              return (
+                <div
+                  key={p.id}
+                  className="p-6 rounded-xl"
+                  style={{
+                    backgroundColor: 'var(--color-bg-card)',
+                    border: `1px solid ${style.border}`,
+                    boxShadow: 'var(--shadow-card)',
+                  }}
+                >
+                  <div className="flex items-center gap-3 mb-4">
+                    <div
+                      className="w-10 h-10 rounded-full flex items-center justify-center"
+                      style={{
+                        backgroundColor: style.softBg,
+                        border: `1px solid ${style.border}`,
+                        color: style.accent,
+                        fontWeight: 700,
+                      }}
+                    >
+                      {style.badge}
                     </div>
-                  ))}
+                    <div>
+                      <h3 className="text-[18px]" style={{ color: 'var(--color-text-primary)' }}>
+                        {p.name}
+                        <span
+                          className="text-[13px] ml-2"
+                          style={{ color: 'var(--color-text-secondary)', fontWeight: 400 }}
+                        >
+                          관점 {idx + 1}
+                        </span>
+                      </h3>
+                      <p className="text-[15px] leading-relaxed" style={{ color: style.accent, lineHeight: 1.7 }}>
+                        {p.identity}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    {p.attributes.map(attr => (
+                      <div key={attr.label} className="flex items-start gap-3">
+                        <span
+                          className="text-[12px] px-2 py-0.5 rounded flex-shrink-0 mt-0.5"
+                          style={{
+                            backgroundColor: style.softBg,
+                            color: style.accent,
+                            border: `1px solid ${style.border}`,
+                            minWidth: '168px',
+                          }}
+                        >
+                          {attr.label}
+                        </span>
+                        <span className="text-[14px] leading-relaxed" style={{ color: 'var(--color-text-primary)', lineHeight: 1.72 }}>
+                          {attr.value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                {/* Sample questions section REMOVED as per requirements */}
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <FooterStepNav className="mt-8 flex justify-between" />

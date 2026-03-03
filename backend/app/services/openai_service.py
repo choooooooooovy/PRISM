@@ -41,7 +41,7 @@ class OpenAIService:
     async def run_structured(
         self,
         *,
-        db: AsyncSession,
+        db: AsyncSession | None,
         session_id: UUID | None,
         task_type: str,
         run_id: UUID | None,
@@ -51,6 +51,7 @@ class OpenAIService:
         input_json: dict[str, Any],
         mock_output_factory: Callable[[], dict[str, Any]],
         model_override: str | None = None,
+        timeout_sec: float | None = None,
     ) -> tuple[T, Any]:
         model_name = model_override or self.settings.openai_model
         schema = self._to_strict_json_schema(output_model.model_json_schema())
@@ -65,7 +66,8 @@ class OpenAIService:
                 if self.settings.llm_mock_mode or not self.settings.openai_api_key:
                     output_json = mock_output_factory()
                 else:
-                    response = await self.client.responses.create(
+                    client = self.client.with_options(timeout=timeout_sec) if timeout_sec else self.client
+                    response = await client.responses.create(
                         model=model_name,
                         input=[
                             {
@@ -125,7 +127,7 @@ class OpenAIService:
                     latency_ms=latency_ms,
                     error=error,
                 )
-                if attempt == 0:
+                if attempt == 0 and not self._is_non_retryable_error(exc):
                     system_prompt = (
                         system_prompt
                         + '\n\nIMPORTANT: Return valid JSON matching schema exactly. No prose.'
@@ -188,3 +190,16 @@ class OpenAIService:
                         return json.loads(txt)
 
         raise ValueError('No JSON output returned from OpenAI Responses API')
+
+    @staticmethod
+    def _is_non_retryable_error(exc: Exception) -> bool:
+        lowered = str(exc).lower()
+        return any(
+            token in lowered
+            for token in (
+                'insufficient_quota',
+                'invalid_api_key',
+                'authenticationerror',
+                'permissiondeniederror',
+            )
+        )

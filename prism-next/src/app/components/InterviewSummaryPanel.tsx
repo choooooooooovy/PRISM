@@ -76,7 +76,7 @@ export function InterviewSummaryPanel({
                       className="text-[12px] leading-relaxed"
                       style={{ color: 'var(--color-text-primary)' }}
                     >
-                      {item.text}
+                      {item.text?.trim() || '\u00A0'}
                     </p>
                   </div>
                 ))}

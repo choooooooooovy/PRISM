@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,17 +46,31 @@ class RAGService:
         trait_line = ' | '.join(f'{label}: {value}' for label, value in trait_pairs if value)
         return f"{persona_query}\n페르소나 관점: {persona.get('display_name')}\n{trait_line}".strip()
 
-    async def retrieve_static(self, db: AsyncSession, query: str, top_k: int | None = None) -> tuple[list[dict], list[str]]:
+    async def retrieve_static(
+        self,
+        db: AsyncSession,
+        query: str,
+        top_k: int | None = None,
+        exclude_ids: set[str] | None = None,
+    ) -> tuple[list[dict], list[str]]:
         top_k = top_k or self.settings.rag_top_k
         emb = await self.openai_service.create_embedding(query)
 
         distance = DocumentModel.embedding.cosine_distance(emb).label('distance')
-        stmt = select(DocumentModel, distance).order_by(distance).limit(top_k)
+        stmt = select(DocumentModel, distance).order_by(distance).limit(max(top_k * 3, top_k))
         rows = (await db.execute(stmt)).all()
 
         chunks: list[dict] = []
         ids: list[str] = []
+        excluded_uuid_ids: set[UUID] = set()
+        for raw in exclude_ids or set():
+            try:
+                excluded_uuid_ids.add(UUID(str(raw)))
+            except Exception:  # noqa: BLE001
+                continue
         for doc, dist in rows:
+            if excluded_uuid_ids and doc.id in excluded_uuid_ids:
+                continue
             dist_value = float(dist) if dist is not None else None
             if dist_value is not None and not math.isfinite(dist_value):
                 dist_value = None
@@ -69,6 +84,8 @@ class RAGService:
                     'distance': dist_value,
                 }
             )
+            if len(chunks) >= top_k:
+                break
         return chunks, ids
 
     def retrieve_dynamic(self, query: str, top_k: int | None = None) -> list[dict]:

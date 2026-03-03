@@ -20,6 +20,14 @@ class Settings(BaseSettings):
         alias='CORS_ALLOW_ORIGINS',
     )
     cors_allow_credentials: bool = Field(default=True, alias='CORS_ALLOW_CREDENTIALS')
+    cors_allow_origin_regex: str = Field(
+        default=r'https?://(localhost|127\.0\.0\.1)(:\d+)?$',
+        alias='CORS_ALLOW_ORIGIN_REGEX',
+    )
+    purge_conversation_on_new_session: bool = Field(
+        default=True,
+        alias='PURGE_CONVERSATION_ON_NEW_SESSION',
+    )
 
     database_url: str = Field(
         default='postgresql+asyncpg://postgres:postgres@localhost:5432/prism',
@@ -43,10 +51,14 @@ class Settings(BaseSettings):
 
     rag_top_k: int = Field(default=6, alias='RAG_TOP_K')
     llm_mock_mode: bool = Field(default=False, alias='LLM_MOCK_MODE')
-    openai_timeout_sec: float = Field(default=45.0, alias='OPENAI_TIMEOUT_SEC')
+    openai_timeout_sec: float = Field(default=90.0, alias='OPENAI_TIMEOUT_SEC')
+    storage_mode: str = Field(default='postgres', alias='STORAGE_MODE')
+    storage_dir: str = Field(default='runtime', alias='STORAGE_DIR')
 
     @model_validator(mode='after')
     def validate_live_mode_requirements(self) -> 'Settings':
+        if self.storage_mode not in {'postgres', 'file'}:
+            raise ValueError('STORAGE_MODE must be one of: postgres, file')
         if not self.llm_mock_mode and not self.openai_api_key.strip():
             raise ValueError(
                 'OPENAI_API_KEY is required when LLM_MOCK_MODE=false. '

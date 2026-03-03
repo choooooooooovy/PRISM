@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import file_store
 from app.models import (
     ArtifactModel,
     MessageModel,
@@ -31,12 +32,18 @@ def _sanitize_json(value: Any) -> Any:
 
 
 async def create_session(
-    db: AsyncSession,
+    db: AsyncSession | None,
     *,
     title: str | None,
     condition_tags: dict | None,
     metadata_json: dict | None,
 ) -> SessionModel:
+    if db is None:
+        return await file_store.create_session(
+            title=title,
+            condition_tags=condition_tags,
+            metadata_json=metadata_json,
+        )
     item = SessionModel(title=title, condition_tags=condition_tags, metadata_json=metadata_json)
     db.add(item)
     await db.commit()
@@ -44,11 +51,27 @@ async def create_session(
     return item
 
 
-async def get_session(db: AsyncSession, session_id: UUID) -> SessionModel | None:
+async def purge_conversation_data(db: AsyncSession | None) -> None:
+    if db is None:
+        await file_store.purge_conversation_data()
+        return
+    # Deleting sessions cascades messages/artifacts and keeps prompt/retrieval logs
+    # with nullable session_id (set null by FK action).
+    await db.execute(delete(SessionModel))
+    await db.commit()
+
+
+async def get_session(db: AsyncSession | None, session_id: UUID) -> SessionModel | None:
+    if db is None:
+        return await file_store.get_session(session_id)
     return await db.get(SessionModel, session_id)
 
 
-async def get_session_with_data(db: AsyncSession, session_id: UUID) -> tuple[SessionModel | None, list, list]:
+async def get_session_with_data(
+    db: AsyncSession | None, session_id: UUID
+) -> tuple[SessionModel | None, list, list]:
+    if db is None:
+        return await file_store.get_session_with_data(session_id)
     session = await get_session(db, session_id)
     if not session:
         return None, [], []
@@ -70,7 +93,7 @@ async def get_session_with_data(db: AsyncSession, session_id: UUID) -> tuple[Ses
 
 
 async def upsert_artifact(
-    db: AsyncSession,
+    db: AsyncSession | None,
     *,
     session_id: UUID,
     phase: str,
@@ -79,6 +102,15 @@ async def upsert_artifact(
     payload: dict[str, Any],
     prompt_run_id: UUID | None = None,
 ) -> ArtifactModel:
+    if db is None:
+        return await file_store.upsert_artifact(
+            session_id=session_id,
+            phase=phase,
+            step=step,
+            artifact_type=artifact_type,
+            payload=payload,
+            prompt_run_id=prompt_run_id,
+        )
     q = select(ArtifactModel).where(
         ArtifactModel.session_id == session_id,
         ArtifactModel.phase == phase,
@@ -108,8 +140,10 @@ async def upsert_artifact(
 
 
 async def list_artifacts_by_phase_step(
-    db: AsyncSession, session_id: UUID, phase: str, step: str
+    db: AsyncSession | None, session_id: UUID, phase: str, step: str
 ) -> list[ArtifactModel]:
+    if db is None:
+        return await file_store.list_artifacts_by_phase_step(session_id, phase, step)
     q = (
         select(ArtifactModel)
         .where(
@@ -123,8 +157,10 @@ async def list_artifacts_by_phase_step(
 
 
 async def get_latest_artifact_by_type(
-    db: AsyncSession, session_id: UUID, artifact_type: str
+    db: AsyncSession | None, session_id: UUID, artifact_type: str
 ) -> ArtifactModel | None:
+    if db is None:
+        return await file_store.get_latest_artifact_by_type(session_id, artifact_type)
     q = (
         select(ArtifactModel)
         .where(ArtifactModel.session_id == session_id, ArtifactModel.artifact_type == artifact_type)
@@ -135,7 +171,7 @@ async def get_latest_artifact_by_type(
 
 
 async def create_message(
-    db: AsyncSession,
+    db: AsyncSession | None,
     *,
     session_id: UUID,
     phase: str,
@@ -144,6 +180,15 @@ async def create_message(
     content: str,
     turn_index: int | None = None,
 ) -> MessageModel:
+    if db is None:
+        return await file_store.create_message(
+            session_id=session_id,
+            phase=phase,
+            step=step,
+            role=role,
+            content=content,
+            turn_index=turn_index,
+        )
     row = MessageModel(
         session_id=session_id,
         phase=phase,
@@ -159,7 +204,7 @@ async def create_message(
 
 
 async def create_prompt_run(
-    db: AsyncSession,
+    db: AsyncSession | None,
     *,
     session_id: UUID | None,
     run_id: UUID | None,
@@ -171,6 +216,18 @@ async def create_prompt_run(
     latency_ms: int | None,
     error: str | None,
 ) -> PromptRunModel:
+    if db is None:
+        return await file_store.create_prompt_run(
+            session_id=session_id,
+            run_id=run_id,
+            task_type=task_type,
+            prompt_version=prompt_version,
+            model=model,
+            input_json=_sanitize_json(input_json),
+            output_json=_sanitize_json(output_json),
+            latency_ms=latency_ms,
+            error=error,
+        )
     row = PromptRunModel(
         session_id=session_id,
         run_id=run_id,
@@ -189,7 +246,7 @@ async def create_prompt_run(
 
 
 async def create_retrieval_log(
-    db: AsyncSession,
+    db: AsyncSession | None,
     *,
     session_id: UUID | None,
     run_id: UUID | None,
@@ -201,6 +258,18 @@ async def create_retrieval_log(
     rag_chunk_ids: list[str] | None,
     error: str | None = None,
 ) -> RetrievalLogModel:
+    if db is None:
+        return await file_store.create_retrieval_log(
+            session_id=session_id,
+            run_id=run_id,
+            task_type=task_type,
+            route=route,
+            persona_query=persona_query,
+            transformed_query=transformed_query,
+            tavily_results_meta=_sanitize_json(tavily_results_meta),
+            rag_chunk_ids=_sanitize_json(rag_chunk_ids),
+            error=error,
+        )
     row = RetrievalLogModel(
         session_id=session_id,
         run_id=run_id,
@@ -218,7 +287,12 @@ async def create_retrieval_log(
     return row
 
 
-async def delete_artifacts_for_step(db: AsyncSession, session_id: UUID, phase: str, step: str) -> None:
+async def delete_artifacts_for_step(
+    db: AsyncSession | None, session_id: UUID, phase: str, step: str
+) -> None:
+    if db is None:
+        await file_store.delete_artifacts_for_step(session_id, phase, step)
+        return
     await db.execute(
         delete(ArtifactModel).where(
             ArtifactModel.session_id == session_id,

@@ -1,11 +1,11 @@
 import React from 'react';
 import { Layout } from '../components/Layout';
-import { ContextPanel } from '../components/RightPanel';
 import { FooterStepNav } from '../components/FooterStepNav';
-import { getLatestArtifact, runTask } from '@/lib/backend';
+import { getLatestArtifact, getUserErrorMessage, runTask } from '@/lib/backend';
+import { getPersonaStyle } from '@/lib/personaStyle';
+import { buildPersonaTaglineMap } from '@/lib/personaTagline';
 import {
   ChevronDown, ChevronRight, Plus, Trash2, GripVertical,
-  MessageCircle,
 } from 'lucide-react';
 
 /* ── Types ── */
@@ -31,11 +31,38 @@ interface UnifiedItem {
 const MAX_ALTS = 5;
 const MIN_ALTS = 3;
 
+function createLocalItemId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `local-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+}
+
+function ensureUniqueUnifiedItems(
+  rows: Array<{ id: string; title: string; proposer: string; similar?: string }>,
+): UnifiedItem[] {
+  const idCounter = new Map<string, number>();
+  return rows.map((row, index) => {
+    const baseId = String(row.id || `u${index + 1}`).trim() || `u${index + 1}`;
+    const nextCount = (idCounter.get(baseId) || 0) + 1;
+    idCounter.set(baseId, nextCount);
+    const uniqueId = nextCount === 1 ? baseId : `${baseId}-${nextCount}`;
+    return {
+      id: uniqueId,
+      title: row.title,
+      proposer: row.proposer,
+      similar: row.similar,
+    };
+  });
+}
+
 export default function Phase2_2AlternativeGeneration() {
   const [isSubmittingNext, setIsSubmittingNext] = React.useState(false);
   const [templateOpen, setTemplateOpen] = React.useState(true);
+  const [submitError, setSubmitError] = React.useState('');
   const [personaSuggestionState, setPersonaSuggestionState] =
     React.useState<PersonaSuggestion[]>([]);
+  const [personaTaglineById, setPersonaTaglineById] = React.useState<Record<string, string>>({});
   const [items, setItems] = React.useState<UnifiedItem[]>([]);
   const [showAddForm, setShowAddForm] = React.useState(false);
   const [newTitle, setNewTitle] = React.useState('');
@@ -44,19 +71,32 @@ export default function Phase2_2AlternativeGeneration() {
     let mounted = true;
     const load = async () => {
       try {
-        const artifact = await getLatestArtifact<{
-          persona_candidates?: Array<{
-            persona_id: string;
-            display_name: string;
-            candidates: Array<{ candidate_id: string; title: string; summary: string }>;
-          }>;
-          unified_candidates?: Array<{
-            id: string;
-            title: string;
-            proposer: string;
-            similar?: string;
-          }>;
-        }>('phase2_candidates');
+        const [artifact, personasArtifact] = await Promise.all([
+          getLatestArtifact<{
+            persona_candidates?: Array<{
+              persona_id: string;
+              display_name: string;
+              candidates: Array<{ candidate_id: string; title: string; summary: string }>;
+            }>;
+            unified_candidates?: Array<{
+              id: string;
+              title: string;
+              proposer: string;
+              similar?: string;
+            }>;
+          }>('phase2_candidates'),
+          getLatestArtifact<{
+            personas?: Array<{
+              persona_id: string;
+              identity_summary?: string;
+              core_career_values?: string;
+              risk_challenge_orientation?: string;
+              information_processing_style?: string;
+              proactive_agency?: string;
+            }>;
+          }>('phase1_personas'),
+        ]);
+        if (mounted) setPersonaTaglineById(buildPersonaTaglineMap(personasArtifact?.personas || []));
 
         if (!artifact || !mounted) return;
 
@@ -74,14 +114,7 @@ export default function Phase2_2AlternativeGeneration() {
           );
         }
         if (artifact.unified_candidates?.length) {
-          setItems(
-            artifact.unified_candidates.map(item => ({
-              id: item.id,
-              title: item.title,
-              proposer: item.proposer,
-              similar: item.similar,
-            })),
-          );
+          setItems(ensureUniqueUnifiedItems(artifact.unified_candidates));
         }
       } catch {
         // no-op
@@ -99,7 +132,7 @@ export default function Phase2_2AlternativeGeneration() {
     if (!newTitle.trim()) return;
     setItems(prev => [
       ...prev,
-      { id: String(Date.now()), title: newTitle, proposer: '직접 추가' },
+      { id: createLocalItemId(), title: newTitle, proposer: '직접 추가' },
     ]);
     setNewTitle('');
     setShowAddForm(false);
@@ -118,7 +151,7 @@ export default function Phase2_2AlternativeGeneration() {
       {/* ── Center ── */}
       <div
         className="flex-1 overflow-y-auto p-8"
-        style={{ marginLeft: '260px', marginRight: '360px' }}
+        style={{ marginLeft: '260px' }}
       >
         <div className="max-w-4xl mx-auto">
           {/* Header + instruction */}
@@ -147,10 +180,23 @@ export default function Phase2_2AlternativeGeneration() {
                 style={{ color: 'var(--color-text-secondary)' }}
               >
                 페르소나별 제안 후보를 참고해서 나만의 대안 리스트를 직접 편집·확정하세요.<br />
-                오른쪽 Q&A를 참고하되, 리스트는 이 화면에서 직접 수정합니다.
+                이 화면에서 대안 제목을 직접 정리하고 다음 단계 비교에 활용합니다.
               </p>
             </div>
           </div>
+
+          {submitError && (
+            <div
+              className="mb-4 px-4 py-3 rounded-lg text-[13px]"
+              style={{
+                backgroundColor: 'rgba(239,68,68,0.1)',
+                border: '1px solid rgba(239,68,68,0.35)',
+                color: 'var(--color-text-primary)',
+              }}
+            >
+              {submitError}
+            </div>
+          )}
 
           {/* Goal / counter — updated UX writing */}
           <div
@@ -234,23 +280,43 @@ export default function Phase2_2AlternativeGeneration() {
                   {personaSuggestionState.map(ps => (
                     <div key={ps.persona}>
                       <div className="flex items-center gap-1.5 mb-2.5">
-                        <span
-                          className="text-[11px] px-1.5 py-0.5 rounded"
-                          style={{
-                            backgroundColor: 'rgba(255,31,86,0.1)',
-                            color: 'var(--color-accent)',
-                            fontWeight: 600,
-                          }}
-                        >
-                          {ps.persona}
-                        </span>
-                        <span
-                          className="text-[12px]"
-                          style={{ color: 'var(--color-text-secondary)' }}
-                        >
-                          {ps.label}
-                        </span>
+                        {(() => {
+                          const style = getPersonaStyle(ps.persona, ps.label);
+                          return (
+                            <>
+                              <span
+                                className="text-[11px] px-2 py-0.5 rounded-full"
+                                style={{
+                                  backgroundColor: style.softBg,
+                                  color: style.accent,
+                                  border: `1px solid ${style.border}`,
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {style.badge}
+                              </span>
+                              <span
+                                className="text-[11px] px-1.5 py-0.5 rounded"
+                                style={{
+                                  backgroundColor: style.softBg,
+                                  color: style.accent,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {ps.persona}
+                              </span>
+                              <span className="text-[12px]" style={{ color: 'var(--color-text-secondary)' }}>
+                                {ps.label}
+                              </span>
+                            </>
+                          );
+                        })()}
                       </div>
+                      {personaTaglineById[ps.persona] && (
+                        <p className="text-[11px] mb-2.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.65 }}>
+                          {personaTaglineById[ps.persona]}
+                        </p>
+                      )}
                       <div className="space-y-2">
                         {ps.candidates.map(c => (
                           <div
@@ -349,7 +415,7 @@ export default function Phase2_2AlternativeGeneration() {
             <div className="space-y-2">
               {items.map((item, index) => (
                 <div
-                  key={item.id}
+                  key={`${item.id}-${index}`}
                   className="flex items-center gap-3 px-4 py-3 rounded-lg transition-all"
                   style={{
                     backgroundColor: 'var(--color-bg-card)',
@@ -407,7 +473,7 @@ export default function Phase2_2AlternativeGeneration() {
                         border: '1px solid var(--color-border)',
                       }}
                     >
-                      유사: {item.similar}
+                      유사 제안: {item.similar}
                     </span>
                   )}
 
@@ -437,6 +503,7 @@ export default function Phase2_2AlternativeGeneration() {
             nextDisabled={items.length < MIN_ALTS || isSubmittingNext}
             onBeforeNext={async () => {
               setIsSubmittingNext(true);
+              setSubmitError('');
               try {
                 await runTask('phase3_generate_comments_and_drafts', {
                   candidates: {
@@ -458,6 +525,9 @@ export default function Phase2_2AlternativeGeneration() {
                   },
                 });
                 return true;
+              } catch (error) {
+                setSubmitError(getUserErrorMessage(error, '다음 단계 생성에 실패했습니다. 잠시 후 다시 시도해 주세요.'));
+                return false;
               } finally {
                 setIsSubmittingNext(false);
               }
@@ -465,15 +535,6 @@ export default function Phase2_2AlternativeGeneration() {
           />
         </div>
       </div>
-
-      {/* ── Right: 직업/대안 Q&A (채팅, 반영 버튼 없음) ── */}
-      <ContextPanel title="직업/대안 Q&A" icon={MessageCircle}>
-        <div className="px-4 py-4 text-[13px] leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
-          이 단계에서는 후보 통합/편집이 핵심입니다.
-          <br />
-          중앙 리스트를 직접 정리하고 다음 단계에서 비교 초안을 생성해 주세요.
-        </div>
-      </ContextPanel>
     </Layout>
   );
 }

@@ -15,6 +15,7 @@ from app.services.openai_service import OpenAIService
 from app.services.repositories import (
     create_session,
     get_session_with_data,
+    purge_conversation_data,
     upsert_artifact,
 )
 from app.tasks.runner import TaskRunner
@@ -28,22 +29,27 @@ settings = get_settings()
 
 
 @router.get('/health')
-async def health(db: AsyncSession = Depends(get_db)) -> dict:
+async def health(db: AsyncSession | None = Depends(get_db)) -> dict:
+    if settings.storage_mode == 'file':
+        return {'status': 'ok', 'storage_mode': 'file'}
     await db.execute(text('SELECT 1'))
-    return {'status': 'ok'}
+    return {'status': 'ok', 'storage_mode': 'postgres'}
 
 
 @router.get('/ready')
-async def ready(db: AsyncSession = Depends(get_db)) -> dict:
+async def ready(db: AsyncSession | None = Depends(get_db)) -> dict:
     checks: dict[str, str] = {'db': 'ok', 'openai': 'ok', 'tavily': 'ok'}
-    try:
-        await db.execute(text('SELECT 1'))
-    except Exception as exc:  # noqa: BLE001
-        checks['db'] = f'error: {type(exc).__name__}'
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={'status': 'not_ready', 'checks': checks},
-        ) from exc
+    if settings.storage_mode == 'file':
+        checks['db'] = 'skipped(file_mode)'
+    else:
+        try:
+            await db.execute(text('SELECT 1'))
+        except Exception as exc:  # noqa: BLE001
+            checks['db'] = f'error: {type(exc).__name__}'
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={'status': 'not_ready', 'checks': checks},
+            ) from exc
 
     if not settings.llm_mock_mode and not settings.openai_api_key.strip():
         checks['openai'] = 'missing_key'
@@ -63,7 +69,9 @@ async def list_tasks() -> TaskRegistryRead:
 
 
 @router.post('/sessions', response_model=SessionRead, status_code=status.HTTP_201_CREATED)
-async def create_session_route(payload: SessionCreate, db: AsyncSession = Depends(get_db)):
+async def create_session_route(payload: SessionCreate, db: AsyncSession | None = Depends(get_db)):
+    if settings.purge_conversation_on_new_session:
+        await purge_conversation_data(db)
     row = await create_session(
         db,
         title=payload.title,
@@ -74,7 +82,7 @@ async def create_session_route(payload: SessionCreate, db: AsyncSession = Depend
 
 
 @router.get('/sessions/{session_id}', response_model=SessionDetail)
-async def get_session_route(session_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_session_route(session_id: UUID, db: AsyncSession | None = Depends(get_db)):
     session, artifacts, messages = await get_session_with_data(db, session_id)
     if not session:
         raise HTTPException(status_code=404, detail='session not found')
@@ -89,7 +97,7 @@ async def get_session_route(session_id: UUID, db: AsyncSession = Depends(get_db)
 async def patch_artifact_route(
     session_id: UUID,
     payload: ArtifactPatch,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession | None = Depends(get_db),
 ):
     row = await upsert_artifact(
         db,
@@ -103,7 +111,7 @@ async def patch_artifact_route(
 
 
 @router.post('/ai/run', response_model=AiRunResponse)
-async def ai_run_route(payload: AiRunRequest, db: AsyncSession = Depends(get_db)):
+async def ai_run_route(payload: AiRunRequest, db: AsyncSession | None = Depends(get_db)):
     run_id = uuid4()
     result = await runner.run(db, payload, run_id)
     return AiRunResponse(
@@ -117,7 +125,12 @@ async def ai_run_route(payload: AiRunRequest, db: AsyncSession = Depends(get_db)
 
 
 @router.post('/admin/rag/ingest', response_model=RAGIngestResponse)
-async def rag_ingest_route(payload: RAGIngestRequest, db: AsyncSession = Depends(get_db)):
+async def rag_ingest_route(payload: RAGIngestRequest, db: AsyncSession | None = Depends(get_db)):
+    if settings.storage_mode == 'file':
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail='RAG ingest is disabled in STORAGE_MODE=file',
+        )
     inserted = 0
     source_ids: set[str] = set()
 

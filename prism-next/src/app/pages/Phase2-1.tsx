@@ -2,10 +2,14 @@ import React from 'react';
 import { Layout } from '../components/Layout';
 import { ContextPanel } from '../components/RightPanel';
 import { FooterStepNav } from '../components/FooterStepNav';
-import { getLatestArtifact, runTask } from '@/lib/backend';
+import { getLatestArtifact, getMessagesByStep, getUserErrorMessage, runTask } from '@/lib/backend';
+import { getPersonaStyle } from '@/lib/personaStyle';
+import { buildPersonaTaglineMap } from '@/lib/personaTagline';
 import {
   Sparkles,
   MessageCircle,
+  Send,
+  Zap,
 } from 'lucide-react';
 
 /* ── Types ── */
@@ -20,6 +24,7 @@ interface JobCard {
 interface PersonaBoard {
   id: string;
   name: string;
+  tagline?: string;
   jobs: JobCard[];
 }
 
@@ -30,23 +35,33 @@ export default function Phase2_1PersonaExploration() {
   const [selectedJobId, setSelectedJobId] = React.useState<string | null>(null);
   const [knowledgeText, setKnowledgeText] = React.useState('');
   const [errorMessage, setErrorMessage] = React.useState('');
+  const [qaMessages, setQaMessages] = React.useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
+  const [qaInput, setQaInput] = React.useState('');
+  const [isQaLoading, setIsQaLoading] = React.useState(true);
+  const [isQaSending, setIsQaSending] = React.useState(false);
+  const [personaTaglineById, setPersonaTaglineById] = React.useState<Record<string, string>>({});
+  const qaEndRef = React.useRef<HTMLDivElement>(null);
 
-  const mapExploreToBoards = (payload: {
-    persona_results?: Array<{
-      persona_id: string;
-      display_name: string;
-      cards: Array<{
-        job_title: string;
-        tasks: string;
-        work_environment: string;
-        outlook_salary: string;
+  const mapExploreToBoards = (
+    payload: {
+      persona_results?: Array<{
+        persona_id: string;
+        display_name: string;
+        cards: Array<{
+          job_title: string;
+          tasks: string;
+          work_environment: string;
+          outlook_salary: string;
+        }>;
       }>;
-    }>;
-  }): PersonaBoard[] => {
+    },
+    taglineMap: Record<string, string>,
+  ): PersonaBoard[] => {
     if (!payload.persona_results?.length) return [];
     return payload.persona_results.map(p => ({
       id: p.persona_id,
       name: p.display_name,
+      tagline: taglineMap[p.persona_id] || '',
       jobs: p.cards.map((card, idx) => ({
         id: `${p.persona_id}-${idx + 1}`,
         title: card.job_title,
@@ -61,20 +76,34 @@ export default function Phase2_1PersonaExploration() {
     let mounted = true;
     const load = async () => {
       try {
-        const artifact = await getLatestArtifact<{
-          persona_results?: Array<{
-            persona_id: string;
-            display_name: string;
-            cards: Array<{
-              job_title: string;
-              tasks: string;
-              work_environment: string;
-              outlook_salary: string;
+        const [artifact, personasArtifact] = await Promise.all([
+          getLatestArtifact<{
+            persona_results?: Array<{
+              persona_id: string;
+              display_name: string;
+              cards: Array<{
+                job_title: string;
+                tasks: string;
+                work_environment: string;
+                outlook_salary: string;
+              }>;
             }>;
-          }>;
-        }>('phase2_explore_cards');
+          }>('phase2_explore_cards'),
+          getLatestArtifact<{
+            personas?: Array<{
+              persona_id: string;
+              identity_summary?: string;
+              core_career_values?: string;
+              risk_challenge_orientation?: string;
+              information_processing_style?: string;
+              proactive_agency?: string;
+            }>;
+          }>('phase1_personas'),
+        ]);
+        const taglineMap = buildPersonaTaglineMap(personasArtifact?.personas || []);
+        if (mounted) setPersonaTaglineById(taglineMap);
         if (!artifact || !mounted) return;
-        setBoards(mapExploreToBoards(artifact));
+        setBoards(mapExploreToBoards(artifact, taglineMap));
         setExplored(true);
       } catch {
         // no-op
@@ -86,12 +115,49 @@ export default function Phase2_1PersonaExploration() {
     };
   }, []);
 
+  React.useEffect(() => {
+    let mounted = true;
+    const loadQa = async () => {
+      setIsQaLoading(true);
+      try {
+        const history = await getMessagesByStep('phase2', '2-1');
+        if (!mounted) return;
+        setQaMessages(history);
+        const hasAssistant = history.some(msg => msg.role === 'assistant');
+        if (!hasAssistant) {
+          const res = await runTask('phase2_explore_chat_turn', { user_message: '' });
+          if (!mounted) return;
+          const assistantMessage = String(res.output_json?.assistant_message || '');
+          setQaMessages([{ role: 'assistant', content: assistantMessage }]);
+        }
+      } catch (error) {
+        if (!mounted) return;
+        setQaMessages([
+          {
+            role: 'assistant',
+            content: getUserErrorMessage(error, 'Q&A를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'),
+          },
+        ]);
+      } finally {
+        if (mounted) setIsQaLoading(false);
+      }
+    };
+    loadQa();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  React.useEffect(() => {
+    qaEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [qaMessages]);
+
   const handleExplore = async () => {
     setIsGenerating(true);
     setErrorMessage('');
     try {
       const res = await runTask('phase2_explore', {
-        goal_query: knowledgeText || '페르소나 기반 직업/대안 정보 탐색',
+        goal_query: knowledgeText || '직업/대안 정보 탐색',
       });
       setBoards(
         mapExploreToBoards(
@@ -107,6 +173,7 @@ export default function Phase2_1PersonaExploration() {
               }>;
             }>;
           },
+          personaTaglineById,
         ),
       );
       setExplored(true);
@@ -118,6 +185,39 @@ export default function Phase2_1PersonaExploration() {
   };
 
   const selectedJob = boards.flatMap(b => b.jobs).find(j => j.id === selectedJobId);
+
+  const handleSendQa = async () => {
+    const content = qaInput.trim();
+    if (!content || isQaSending || isQaLoading) return;
+    setQaMessages(prev => [...prev, { role: 'user', content }]);
+    setQaInput('');
+    setIsQaSending(true);
+    try {
+      const res = await runTask('phase2_explore_chat_turn', {
+        user_message: content,
+        selected_card: selectedJob
+          ? {
+            title: selectedJob.title,
+            tasks: selectedJob.tasks,
+            work_environment: selectedJob.environment,
+            outlook_salary: selectedJob.outlook,
+          }
+          : null,
+      });
+      const assistantMessage = String(res.output_json?.assistant_message || '좋아요. 더 구체적으로 물어보셔도 됩니다.');
+      setQaMessages(prev => [...prev, { role: 'assistant', content: assistantMessage }]);
+    } catch (error) {
+      setQaMessages(prev => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: getUserErrorMessage(error, 'Q&A 응답을 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.'),
+        },
+      ]);
+    } finally {
+      setIsQaSending(false);
+    }
+  };
 
   return (
     <Layout>
@@ -136,7 +236,7 @@ export default function Phase2_1PersonaExploration() {
               Phase 2: 직업 탐색
             </span>
             <h1 className="mb-3" style={{ color: 'var(--color-text-primary)' }}>
-              페르소나 기반 직업/대안 정보 탐색
+              직업/대안 정보 탐색
             </h1>
             <div
               className="p-4 rounded-lg"
@@ -192,24 +292,50 @@ export default function Phase2_1PersonaExploration() {
           {/* 3-column persona boards */}
           {explored && (
             <>
-              <div className="grid grid-cols-3 gap-4 mb-8">
+              <div className="grid grid-cols-3 gap-5 mb-8">
                 {boards.map(board => (
                   <div key={board.id}>
                     {/* Board header */}
                     <div className="flex items-center gap-2 mb-3">
-                      <span
-                        className="text-[11px] px-1.5 py-0.5 rounded"
-                        style={{ backgroundColor: 'rgba(255,31,86,0.1)', color: 'var(--color-accent)', fontWeight: 600 }}
-                      >
-                        {board.id}
-                      </span>
-                      <span
-                        className="text-[13px]"
-                        style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}
-                      >
-                        {board.name}
-                      </span>
+                      {(() => {
+                        const style = getPersonaStyle(board.id, board.name);
+                        return (
+                          <>
+                            <span
+                              className="text-[11px] px-2 py-0.5 rounded-full"
+                              style={{
+                                backgroundColor: style.softBg,
+                                color: style.accent,
+                                border: `1px solid ${style.border}`,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {style.badge}
+                            </span>
+                            <span
+                              className="text-[11px] px-1.5 py-0.5 rounded"
+                              style={{ backgroundColor: style.softBg, color: style.accent, fontWeight: 600 }}
+                            >
+                              {board.id}
+                            </span>
+                            <span
+                              className="text-[14px]"
+                              style={{ color: 'var(--color-text-primary)', fontWeight: 500 }}
+                            >
+                              {board.name}
+                            </span>
+                          </>
+                        );
+                      })()}
                     </div>
+                    {(personaTaglineById[board.id] || board.tagline) && (
+                      <p
+                        className="text-[12px] mb-3"
+                        style={{ color: 'var(--color-text-secondary)', lineHeight: 1.7 }}
+                      >
+                        {personaTaglineById[board.id] || board.tagline}
+                      </p>
+                    )}
 
                     {/* Job cards */}
                     <div className="space-y-3">
@@ -243,8 +369,8 @@ export default function Phase2_1PersonaExploration() {
 
                             {/* Info rows — section labels emphasized */}
                             <div
-                              className="space-y-2.5 text-[12px]"
-                              style={{ lineHeight: '1.6' }}
+                              className="space-y-3 text-[13px]"
+                              style={{ lineHeight: '1.72' }}
                             >
                               <div>
                                 <span
@@ -270,7 +396,7 @@ export default function Phase2_1PersonaExploration() {
                                 <span
                                   style={{ color: 'var(--color-text-primary)', fontWeight: 600, display: 'block', marginBottom: '1px' }}
                                 >
-                                  전망 / 연봉
+                                  전망
                                 </span>
                                 <span style={{ color: 'var(--color-text-secondary)' }}>
                                   {job.outlook}
@@ -366,10 +492,60 @@ export default function Phase2_1PersonaExploration() {
 
       {/* ── Right: 직업 탐색 Q&A (채팅, 반영 버튼 없음) ── */}
       <ContextPanel title="직업 탐색 Q&A" icon={MessageCircle}>
-        <div className="px-4 py-4 text-[13px] leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
-          이 단계는 탐색 결과 확인과 정리에 집중합니다.
-          <br />
-          궁금한 내용을 중앙 패널의 메모에 정리한 뒤 다음 단계에서 후보를 편집해 주세요.
+        <div className="flex flex-col h-full">
+          <div className="px-4 py-2 text-[12px]" style={{ color: 'var(--color-text-secondary)', borderBottom: '1px solid var(--color-border)' }}>
+            {selectedJob ? `현재 질문 대상: ${selectedJob.title}` : '카드를 선택하면 해당 대안 중심으로 질문할 수 있습니다.'}
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+            {qaMessages.map((msg, idx) => (
+              <div key={idx} className="flex" style={{ justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                {msg.role === 'assistant' && (
+                  <div
+                    className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mr-2 mt-0.5"
+                    style={{ backgroundColor: 'rgba(255,31,86,0.15)' }}
+                  >
+                    <Zap className="w-3 h-3" style={{ color: 'var(--color-accent)', strokeWidth: 1.5 }} />
+                  </div>
+                )}
+                <div
+                  className="max-w-[84%] px-3 py-2 rounded-xl text-[13px] leading-relaxed"
+                  style={{
+                    backgroundColor: msg.role === 'user' ? 'var(--color-accent)' : 'var(--color-bg-card)',
+                    color: 'var(--color-text-primary)',
+                    border: msg.role === 'assistant' ? '1px solid var(--color-border)' : 'none',
+                    whiteSpace: 'pre-line',
+                  }}
+                >
+                  {msg.content}
+                </div>
+              </div>
+            ))}
+            <div ref={qaEndRef} />
+          </div>
+          <div className="px-4 py-3 flex gap-2" style={{ borderTop: '1px solid var(--color-border)' }}>
+            <input
+              value={qaInput}
+              onChange={e => setQaInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSendQa()}
+              placeholder="대안에 대해 궁금한 점을 입력하세요..."
+              disabled={isQaLoading || isQaSending}
+              className="flex-1 px-3 py-2 rounded-lg text-[13px]"
+              style={{
+                backgroundColor: 'var(--color-bg-card)',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text-primary)',
+                outline: 'none',
+              }}
+            />
+            <button
+              onClick={handleSendQa}
+              disabled={isQaLoading || isQaSending}
+              className="px-3 py-2 rounded-lg"
+              style={{ backgroundColor: 'var(--color-accent)', color: '#fff', opacity: isQaLoading || isQaSending ? 0.6 : 1 }}
+            >
+              <Send className="w-4 h-4" style={{ strokeWidth: 1.5 }} />
+            </button>
+          </div>
         </div>
       </ContextPanel>
     </Layout>
