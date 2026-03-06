@@ -68,27 +68,36 @@ export default function Phase4_1PreparationProgram() {
   const activeAlternative = alternatives.find(alt => alt.rank === activeRank) || alternatives[0];
   const activeSelected = selectedByAlt[activeAlternative?.alternative_id || ''] || [];
 
+  const dedupeLines = (lines: string[]): string[] => {
+    const seen = new Set<string>();
+    const next: string[] = [];
+    lines.forEach(line => {
+      const normalized = line.replace(/\s+/g, ' ').trim();
+      if (!normalized) return;
+      if (seen.has(normalized)) return;
+      seen.add(normalized);
+      next.push(normalized);
+    });
+    return next;
+  };
+
   const toggleItem = (alternativeId: string, itemId: string, planLine: string) => {
-    setSelectedByAlt(prev => {
-      const current = prev[alternativeId] || [];
-      const exists = current.includes(itemId);
-      setPlanTextByAlt(planPrev => {
-        const lines = (planPrev[alternativeId] || '')
-          .split('\n')
-          .map(line => line.trim())
-          .filter(Boolean);
-        const hasLine = lines.includes(planLine);
-        const nextLines = exists
-          ? lines.filter(line => line !== planLine)
-          : hasLine
-            ? lines
-            : [...lines, planLine];
-        return { ...planPrev, [alternativeId]: nextLines.join('\n') };
-      });
-      return {
-        ...prev,
-        [alternativeId]: exists ? current.filter(id => id !== itemId) : [...current, itemId],
-      };
+    const current = selectedByAlt[alternativeId] || [];
+    const exists = current.includes(itemId);
+    const nextSelected = exists ? current.filter(id => id !== itemId) : [...current, itemId];
+    setSelectedByAlt(prev => ({
+      ...prev,
+      [alternativeId]: nextSelected,
+    }));
+    setPlanTextByAlt(prev => {
+      const lines = (prev[alternativeId] || '')
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean);
+      const nextLines = exists
+        ? lines.filter(line => line.replace(/\s+/g, ' ').trim() !== planLine.replace(/\s+/g, ' ').trim())
+        : dedupeLines([...lines, planLine]);
+      return { ...prev, [alternativeId]: nextLines.join('\n') };
     });
   };
 

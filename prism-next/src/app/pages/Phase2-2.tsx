@@ -88,6 +88,7 @@ export default function Phase2_2AlternativeGeneration() {
           getLatestArtifact<{
             personas?: Array<{
               persona_id: string;
+              identity_tagline?: string;
               identity_summary?: string;
               core_career_values?: string;
               risk_challenge_orientation?: string;

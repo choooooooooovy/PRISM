@@ -54,6 +54,7 @@ class Phase1StructuredOutput(APIModel):
 class PersonaProfile(APIModel):
     persona_id: Literal['p1', 'p2', 'p3']
     display_name: str
+    identity_tagline: str = ''
     identity_summary: str
     core_career_values: str
     risk_challenge_orientation: str
@@ -72,12 +73,20 @@ class PersonaProfile(APIModel):
         # Agentic codename style (e.g., Echo, Nova, Flux), not human-style labels.
         if not re.fullmatch(r'[A-Z][A-Za-z0-9]{2,14}', name):
             raise ValueError('display_name must be an agentic codename (e.g., Echo, Nova)')
+        tagline = self.identity_tagline.strip()
+        if not tagline:
+            raise ValueError('identity_tagline must not be empty')
+        if not tagline.endswith('관점'):
+            raise ValueError('identity_tagline must end with "관점"')
+        if any(bad in tagline for bad in ['...', '…', '본다 관점', '함께 관점']):
+            raise ValueError('identity_tagline contains invalid phrase')
         return self
 
 
 class PersonaProfileRaw(APIModel):
     persona_id: Literal['p1', 'p2', 'p3']
     display_name: str
+    identity_tagline: str = ''
     identity_summary: str
     core_career_values: str
     risk_challenge_orientation: str

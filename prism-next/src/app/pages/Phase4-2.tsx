@@ -42,6 +42,7 @@ export default function Phase4_2RealityInterview() {
   });
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSending, setIsSending] = React.useState(false);
+  const [isPreparingRoadmap, setIsPreparingRoadmap] = React.useState(false);
   const [hasStarted, setHasStarted] = React.useState(false);
   const [isInterviewComplete, setIsInterviewComplete] = React.useState(false);
   const [viewMode, setViewMode] = React.useState<'interview' | 'review'>('interview');
@@ -187,22 +188,22 @@ export default function Phase4_2RealityInterview() {
                 <button
                   type="button"
                   onClick={handleStartInterview}
-                  disabled={isLoading || isSending || hasStarted}
+                  disabled={isLoading || isSending || isPreparingRoadmap || hasStarted}
                   className="px-4 py-2 rounded-lg text-[13px]"
                   style={{
                     backgroundColor:
-                      isLoading || isSending || hasStarted
+                      isLoading || isSending || isPreparingRoadmap || hasStarted
                         ? 'var(--color-bg-surface)'
                         : 'var(--color-accent)',
                     color:
-                      isLoading || isSending || hasStarted
+                      isLoading || isSending || isPreparingRoadmap || hasStarted
                         ? 'var(--color-text-secondary)'
                         : '#fff',
                     border:
-                      isLoading || isSending || hasStarted
+                      isLoading || isSending || isPreparingRoadmap || hasStarted
                         ? '1px solid var(--color-border)'
                         : 'none',
-                    cursor: isLoading || isSending || hasStarted ? 'not-allowed' : 'pointer',
+                    cursor: isLoading || isSending || isPreparingRoadmap || hasStarted ? 'not-allowed' : 'pointer',
                   }}
                 >
                   {hasStarted ? '인터뷰 진행 중' : isSending ? '시작 중...' : '시작'}
@@ -332,15 +333,37 @@ export default function Phase4_2RealityInterview() {
 
           <FooterStepNav
             className="mt-8 flex justify-between"
-            nextDisabled={isSending || isLoading || !isInterviewComplete || viewMode !== 'review'}
+            nextDisabled={isSending || isLoading || isPreparingRoadmap || !isInterviewComplete || viewMode !== 'review'}
+            nextLabel={isPreparingRoadmap ? '로드맵 생성 중...' : undefined}
             onBeforeNext={async () => {
-              await upsertArtifact({
-                phase: 'phase4',
-                step: '4-2',
-                artifactType: 'phase4_reality_form',
-                payload: { ...centerValues },
-              });
-              return true;
+              setErrorMessage('');
+              setIsPreparingRoadmap(true);
+              try {
+                await upsertArtifact({
+                  phase: 'phase4',
+                  step: '4-2',
+                  artifactType: 'phase4_reality_form',
+                  payload: { ...centerValues },
+                });
+                const res = await runTask('phase4_3_interview_turn', { user_message: '' });
+                const outputRows = Array.isArray(res.output_json?.roadmap_rows)
+                  ? (res.output_json.roadmap_rows as Array<Record<string, unknown>>)
+                  : [];
+                if (outputRows.length > 0) {
+                  await upsertArtifact({
+                    phase: 'phase4',
+                    step: '4-3',
+                    artifactType: 'phase4_roadmap_rows',
+                    payload: { rows: outputRows },
+                  });
+                }
+                return true;
+              } catch (error) {
+                setErrorMessage(getUserErrorMessage(error, '다음 단계 준비에 실패했습니다.'));
+                return false;
+              } finally {
+                setIsPreparingRoadmap(false);
+              }
             }}
           />
         </div>

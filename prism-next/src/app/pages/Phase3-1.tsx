@@ -47,6 +47,7 @@ interface CellEditorState {
 
 type AltCellState = Record<Perspective, CellEditorState>;
 type AltPerspectiveSummary = Record<Perspective, string>;
+type AltPerspectiveSourceHash = Record<Perspective, string>;
 
 function uniquePersonaOptions(options: PersonaCommentOption[]): PersonaCommentOption[] {
   const byId = new Map<string, PersonaCommentOption>();
@@ -106,24 +107,31 @@ function summarizePerspective(benefitText: string, costText: string): string {
   return lines.join('\n');
 }
 
-function summarizeFromCellState(cell: CellEditorState): string {
+function isPerspectiveDraftComplete(cell: CellEditorState): boolean {
+  const { benefitText, costText } = getPerspectiveDraftTexts(cell);
+  return Boolean(benefitText.trim()) && Boolean(costText.trim());
+}
+
+function getPerspectiveDraftTexts(cell: CellEditorState): { benefitText: string; costText: string } {
   const normalizedBenefitOptions = uniquePersonaOptions(cell.benefitOptions);
   const normalizedCostOptions = uniquePersonaOptions(cell.costOptions);
+  const benefitText = composeFieldText(
+    normalizedBenefitOptions,
+    cell.selectedBenefitPersonaIds,
+    cell.userBenefits,
+  );
+  const costText = composeFieldText(
+    normalizedCostOptions,
+    cell.selectedCostPersonaIds,
+    cell.userCosts,
+  );
+  return { benefitText, costText };
+}
 
-  const selectedBenefit = normalizedBenefitOptions
-    .filter(option => cell.selectedBenefitPersonaIds.includes(option.persona_id))
-    .map(option => option.comment.trim())
-    .filter(Boolean);
-  const selectedCost = normalizedCostOptions
-    .filter(option => cell.selectedCostPersonaIds.includes(option.persona_id))
-    .map(option => option.comment.trim())
-    .filter(Boolean);
-
-  const manualBenefit = cell.userBenefits.trim();
-  const manualCost = cell.userCosts.trim();
-  const benefitText = [...selectedBenefit, manualBenefit].filter(Boolean).join('\n');
-  const costText = [...selectedCost, manualCost].filter(Boolean).join('\n');
-  return summarizePerspective(benefitText, costText);
+function buildSummarySourceHash(benefitText: string, costText: string): string {
+  const b = benefitText.replace(/\s+/g, ' ').trim();
+  const c = costText.replace(/\s+/g, ' ').trim();
+  return `${b}||${c}`;
 }
 
 const emptyCellState = (): CellEditorState => ({
@@ -223,6 +231,9 @@ export default function Phase3_1BenefitCost() {
   const [selectedAltId, setSelectedAltId] = React.useState<string>('');
   const [stateByAlt, setStateByAlt] = React.useState<Record<string, AltCellState>>({});
   const [summaryByAlt, setSummaryByAlt] = React.useState<Record<string, AltPerspectiveSummary>>({});
+  const [summarySourceHashByAlt, setSummarySourceHashByAlt] = React.useState<
+    Record<string, AltPerspectiveSourceHash>
+  >({});
   const [isSubmittingNext, setIsSubmittingNext] = React.useState(false);
   const [errorMessage, setErrorMessage] = React.useState('');
   const [personaTaglineById, setPersonaTaglineById] = React.useState<Record<string, string>>({});
@@ -258,6 +269,7 @@ export default function Phase3_1BenefitCost() {
           getLatestArtifact<{
             personas?: Array<{
               persona_id: string;
+              identity_tagline?: string;
               identity_summary?: string;
               core_career_values?: string;
               risk_challenge_orientation?: string;
@@ -325,10 +337,13 @@ export default function Phase3_1BenefitCost() {
         setStateByAlt(nextState);
         setPersonaTaglineById(buildPersonaTaglineMap(personaArtifact?.personas || []));
         const nextSummaries: Record<string, AltPerspectiveSummary> = {};
+        const nextSourceHashes: Record<string, AltPerspectiveSourceHash> = {};
         nextAlternatives.forEach(alt => {
           nextSummaries[alt.id] = { self: '', others: '' };
+          nextSourceHashes[alt.id] = { self: '', others: '' };
         });
         setSummaryByAlt(nextSummaries);
+        setSummarySourceHashByAlt(nextSourceHashes);
         if (nextAlternatives[0]) setSelectedAltId(nextAlternatives[0].id);
       } catch {
         if (!mounted) return;
@@ -378,12 +393,21 @@ export default function Phase3_1BenefitCost() {
   const generatePerspectiveSummary = (altId: string, perspective: Perspective) => {
     const cell = stateByAlt[altId]?.[perspective];
     if (!cell) return;
-    const compact = summarizeFromCellState(cell);
+    const { benefitText, costText } = getPerspectiveDraftTexts(cell);
+    const compact = summarizePerspective(benefitText, costText);
+    const sourceHash = buildSummarySourceHash(benefitText, costText);
     setSummaryByAlt(prev => ({
       ...prev,
       [altId]: {
         ...(prev[altId] || { self: '', others: '' }),
         [perspective]: compact,
+      },
+    }));
+    setSummarySourceHashByAlt(prev => ({
+      ...prev,
+      [altId]: {
+        ...(prev[altId] || { self: '', others: '' }),
+        [perspective]: sourceHash,
       },
     }));
   };
@@ -607,6 +631,8 @@ export default function Phase3_1BenefitCost() {
                                                       border: '1px solid rgba(255,255,255,0.12)',
                                                       fontWeight: 500,
                                                       lineHeight: 1.3,
+                                                      whiteSpace: 'normal',
+                                                      wordBreak: 'keep-all',
                                                     }}
                                                   >
                                                     {personaTaglineById[option.persona_id]}
@@ -628,6 +654,20 @@ export default function Phase3_1BenefitCost() {
                                 </div>
                               );
                             })}
+                          </div>
+
+                          <div className="my-2">
+                            <span
+                              className="inline-flex items-center px-2 py-1 rounded text-[11px]"
+                              style={{
+                                color: 'var(--color-text-secondary)',
+                                backgroundColor: 'rgba(255,31,86,0.10)',
+                                border: '1px solid rgba(255,31,86,0.28)',
+                                fontWeight: 600,
+                              }}
+                            >
+                              페르소나 종합 초안
+                            </span>
                           </div>
 
                           <textarea
@@ -731,7 +771,7 @@ export default function Phase3_1BenefitCost() {
                             fontWeight: 600,
                           }}
                         >
-                          {perspective.label} 요약 생성
+                          요약 생성
                         </button>
                       </div>
                       <textarea
@@ -771,14 +811,46 @@ export default function Phase3_1BenefitCost() {
               setErrorMessage('');
               setIsSubmittingNext(true);
               try {
+                const missing: string[] = [];
+                const missingSummaries: string[] = [];
+                alternatives.forEach(alt => {
+                  const altState = stateByAlt[alt.id];
+                  const selfCell = altState?.self || emptyCellState();
+                  const othersCell = altState?.others || emptyCellState();
+                  const lacking: string[] = [];
+                  if (!isPerspectiveDraftComplete(selfCell)) lacking.push('자신');
+                  if (!isPerspectiveDraftComplete(othersCell)) lacking.push('주요 타인');
+                  if (lacking.length) {
+                    missing.push(`${alt.title} (${lacking.join(', ')})`);
+                  }
+
+                  PERSPECTIVES.forEach(p => {
+                    const cell = altState?.[p.id] || emptyCellState();
+                    const { benefitText, costText } = getPerspectiveDraftTexts(cell);
+                    const expectedHash = buildSummarySourceHash(benefitText, costText);
+                    const savedSummary = summaryByAlt[alt.id]?.[p.id]?.trim() || '';
+                    const savedHash = summarySourceHashByAlt[alt.id]?.[p.id] || '';
+                    if (!savedSummary || savedHash !== expectedHash) {
+                      missingSummaries.push(`${alt.title} (${p.label})`);
+                    }
+                  });
+                });
+                if (missing.length > 0) {
+                  setErrorMessage(
+                    `모든 대안에서 Benefit/Cost 초안이 채워져야 다음 단계로 이동할 수 있습니다. 미완성: ${missing.join(' / ')}`,
+                  );
+                  return false;
+                }
+                if (missingSummaries.length > 0) {
+                  setErrorMessage(
+                    `모든 대안의 자신/주요 타인 관점에서 요약 생성 버튼을 눌러 최신 요약을 생성해야 합니다. 미완성: ${missingSummaries.join(' / ')}`,
+                  );
+                  return false;
+                }
+
                 const payload = {
                   alternatives: alternatives.map(alt => {
                     const altState = stateByAlt[alt.id];
-                    const autoSummary: AltPerspectiveSummary = { self: '', others: '' };
-                    PERSPECTIVES.forEach(p => {
-                      const cell = altState?.[p.id] || emptyCellState();
-                      autoSummary[p.id] = summarizeFromCellState(cell);
-                    });
                     return {
                       alternative_id: alt.id,
                       alternative_title: alt.title,
@@ -807,8 +879,8 @@ export default function Phase3_1BenefitCost() {
                         };
                       }),
                       perspective_summaries: {
-                        self: summaryByAlt[alt.id]?.self?.trim() || autoSummary.self,
-                        others: summaryByAlt[alt.id]?.others?.trim() || autoSummary.others,
+                        self: summaryByAlt[alt.id]?.self?.trim() || '',
+                        others: summaryByAlt[alt.id]?.others?.trim() || '',
                       },
                     };
                   }),

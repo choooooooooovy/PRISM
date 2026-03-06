@@ -57,7 +57,7 @@ function splitToBulletLines(text: string): string[] {
       .split(/(?<=[.!?])\s+(?=[가-힣A-Za-z0-9\[])/g)
       .map(part => part.trim())
       .filter(Boolean));
-  return lines.map(part => (part.length > 92 ? `${part.slice(0, 91)}…` : part));
+  return lines;
 }
 
 function normalizeTimingText(text: string): string {
@@ -123,13 +123,12 @@ export default function Phase4_3Roadmap() {
     }
     if (executionPlan?.alternatives?.length) {
       executionPlan.alternatives.forEach(alt => {
-        const firstLine = String(alt.plan_text || '')
-          .split('\n')
-          .map(line => line.trim())
-          .find(Boolean);
-        if (firstLine) {
-          prepLines.push(`${alt.rank}순위 ${alt.alternative_title}: ${firstLine}`);
-        }
+        const rawPlan = String(alt.plan_text || '').trim();
+        if (!rawPlan) return;
+        const planBullets = splitToBulletLines(rawPlan);
+        if (planBullets.length === 0) return;
+        prepLines.push(`${alt.rank}순위 ${alt.alternative_title}: ${planBullets[0]}`);
+        planBullets.slice(1).forEach(line => prepLines.push(`- ${line}`));
       });
     }
     if (!prepLines.length && prep?.alternatives?.length) {
@@ -146,9 +145,9 @@ export default function Phase4_3Roadmap() {
       .slice(2)
       .flatMap(line => {
         const labelRemoved = line.replace(/^\d+순위\s+[^:]+:\s*/g, '').trim();
-        return splitToBulletLines(labelRemoved).slice(0, 3);
+        return splitToBulletLines(labelRemoved);
       })
-      .slice(0, 8);
+      .slice(0, 32);
     setPrepSummary(prepLines.slice(0, 2));
     setPrepSummaryBullets(detailBullets);
 
@@ -165,11 +164,7 @@ export default function Phase4_3Roadmap() {
       setRows(existingRows);
       return;
     }
-
-    const res = await runTask('phase4_3_interview_turn', { user_message: '' });
-    const output = res.output_json as { roadmap_rows?: RoadmapRow[] };
-    const generatedRows = normalizeRows(output.roadmap_rows);
-    setRows(generatedRows);
+    setRows([]);
   }, []);
 
   React.useEffect(() => {
@@ -262,7 +257,7 @@ export default function Phase4_3Roadmap() {
               </h3>
               <div className="space-y-3">
                 {prepSummary.map((item, idx) => (
-                  <p key={idx} className="text-[16px] leading-relaxed" style={{ color: 'var(--color-text-primary)', lineHeight: 1.75 }}>
+                  <p key={idx} className="text-[14px] leading-relaxed" style={{ color: 'var(--color-text-primary)', lineHeight: 1.85 }}>
                     {item}
                   </p>
                 ))}
@@ -271,8 +266,8 @@ export default function Phase4_3Roadmap() {
                     {prepSummaryBullets.map((item, idx) => (
                       <li
                         key={`prep-bullet-${idx}`}
-                        className="text-[14px] leading-relaxed"
-                        style={{ color: 'var(--color-text-primary)', lineHeight: 1.78 }}
+                        className="text-[13px] leading-relaxed"
+                        style={{ color: 'var(--color-text-primary)', lineHeight: 1.9 }}
                       >
                         {item}
                       </li>

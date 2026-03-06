@@ -101,6 +101,7 @@ export default function Phase2_1PersonaExploration() {
           getLatestArtifact<{
             personas?: Array<{
               persona_id: string;
+              identity_tagline?: string;
               identity_summary?: string;
               core_career_values?: string;
               risk_challenge_orientation?: string;
@@ -344,7 +345,8 @@ export default function Phase2_1PersonaExploration() {
                           style={{
                             color: 'var(--color-text-secondary)',
                             lineHeight: 1.7,
-                            ...clampStyle(2),
+                            whiteSpace: 'normal',
+                            wordBreak: 'keep-all',
                           }}
                         >
                           {personaTaglineById[board.id] || board.tagline}

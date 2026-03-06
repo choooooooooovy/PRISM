@@ -65,6 +65,8 @@ class TaskExecutionResult:
 
 class TaskRunner:
     PHASE2_CANDIDATE_TARGET = 5
+    PHASE2_EXPLORE_MIN = 4
+    PHASE2_EXPLORE_MAX = 5
     PHASE1_MAX_SLOT_ATTEMPTS = 2
     PHASE1_SUPPORT_MIN_CHARS = 10
     PHASE1_CORE_SLOTS: set[str] = {
@@ -800,6 +802,9 @@ class TaskRunner:
                 'Do not use person names.\n'
                 'Do not define personas as jobs/occupations (e.g., 개발자, 디자이너, 전문가).\n'
                 'Each persona must prioritize a clearly different core value lens.\n'
+                'identity_tagline must be a concise Korean label ending with "관점".\n'
+                'identity_tagline length should be about 18-34 chars and should be noun-phrase style.\n'
+                'Do not use broken endings such as "본다 관점", "함께 관점", "... 관점".\n'
                 'Use both interview_utterances and structured_summary as input context.\n'
                 'However, preserve nuance from interview_utterances as primary evidence.\n'
                 'Do not expose CASVE original terms.'
@@ -811,6 +816,7 @@ class TaskRunner:
                     'display_name_style': 'English codename, one token, non-human style',
                     'value_diversity': '3 personas should represent distinct core value priorities',
                     'occupation_free_identity': 'identity_summary must describe value perspective, not job title',
+                    'identity_tagline_format': 'Korean concise noun phrase, ~관점 ending, 18-34 chars',
                 },
             },
             mock_output_factory=lambda: {
@@ -834,6 +840,8 @@ class TaskRunner:
                     'Return strict JSON only.\n'
                     'display_name must be unique English codenames (e.g., Echo, Nova, Flux), '
                     'and must not be human names.\n'
+                    'identity_tagline must be Korean concise noun phrase ending with "관점", '
+                    'with natural wording and no broken sentence fragments.\n'
                     'identity_summary must be value-perspective text, not occupation text.\n'
                     'core_career_values across 3 personas must be clearly distinct.'
                 ),
@@ -853,6 +861,10 @@ class TaskRunner:
         if post_repair_reason:
             raw_personas = Phase1PersonasRawOutput.model_validate({'personas': self._mock_personas()})
 
+        normalized_personas = self._normalize_persona_taglines(
+            raw_personas.model_dump(mode='json')['personas']
+        )
+        raw_personas = Phase1PersonasRawOutput.model_validate({'personas': normalized_personas})
         parsed = Phase1PersonasOutput.model_validate(raw_personas.model_dump(mode='json'))
         return parsed.model_dump(mode='json'), prompt_run.id, 'phase1_personas'
 
@@ -1047,7 +1059,7 @@ class TaskRunner:
                 'Generate persona-specific candidate options and a unified candidate list.\n'
                 'Return strict JSON only.\n'
                 'All user-facing text values must be Korean.\n'
-                'Each persona should provide 4-5 candidates (up to 6 allowed by schema).\n'
+                'Each persona should provide 4-5 candidates.\n'
                 'Candidates must be grounded in explore input cards.\n'
                 'Do not invent unrelated new alternatives that do not appear in explore cards.\n'
                 'Maximize diversity across personas, including non-employment alternatives '
@@ -2850,10 +2862,12 @@ class TaskRunner:
         for item in personas:
             if isinstance(item, dict):
                 name = str(item.get('display_name', '')).strip()
+                identity_tagline = str(item.get('identity_tagline', '')).strip()
                 identity_summary = str(item.get('identity_summary', '')).strip()
                 core_values = str(item.get('core_career_values', '')).strip()
             else:
                 name = str(getattr(item, 'display_name', '')).strip()
+                identity_tagline = str(getattr(item, 'identity_tagline', '')).strip()
                 identity_summary = str(getattr(item, 'identity_summary', '')).strip()
                 core_values = str(getattr(item, 'core_career_values', '')).strip()
             if not name:
@@ -2867,6 +2881,8 @@ class TaskRunner:
             seen.add(name)
             if TaskRunner._contains_occupation_terms(identity_summary):
                 return f'identity_summary contains occupation wording: {identity_summary}'
+            if identity_tagline and not TaskRunner._is_valid_identity_tagline(identity_tagline):
+                return f'identity_tagline is invalid: {identity_tagline}'
             primary_value = TaskRunner._extract_primary_value_key(core_values)
             if not primary_value:
                 return 'core_career_values must include explicit value wording'
@@ -2913,11 +2929,104 @@ class TaskRunner:
         return ''
 
     @staticmethod
+    def _is_valid_identity_tagline(text: str) -> bool:
+        label = ' '.join(str(text or '').split()).strip()
+        if not label:
+            return False
+        if not label.endswith('관점'):
+            return False
+        if '...' in label or '…' in label:
+            return False
+        banned_patterns = [
+            '본다 관점',
+            '함께 관점',
+            '하고 싶',
+            '하려는 관점',
+            '하고자 하는 관점',
+        ]
+        if any(pattern in label for pattern in banned_patterns):
+            return False
+        return 12 <= len(label) <= 52
+
+    @staticmethod
+    def _normalize_identity_tagline(raw_tagline: str) -> str:
+        label = ' '.join(str(raw_tagline or '').replace('…', ' ').replace('...', ' ').split()).strip()
+        label = re.sub(r'[.]+$', '', label).strip()
+        label = label.replace('본다 관점', '중시하는 관점').replace('함께 관점', '중시하는 관점')
+        if label and not label.endswith('관점'):
+            label = re.sub(r'(을|를)?\s*(중시한다|추구한다|지향한다|본다)$', '', label).strip()
+            if label:
+                label = f'{label} 관점'
+        return label
+
+    @staticmethod
+    def _build_identity_tagline_fallback(persona: dict[str, Any], idx: int) -> str:
+        merged = ' '.join(
+            [
+                str(persona.get('identity_summary', '') or ''),
+                str(persona.get('core_career_values', '') or ''),
+                str(persona.get('risk_challenge_orientation', '') or ''),
+                str(persona.get('information_processing_style', '') or ''),
+                str(persona.get('proactive_agency', '') or ''),
+            ]
+        )
+        text = ' '.join(merged.split())
+        categories: list[tuple[str, list[str]]] = [
+            ('절차적 정의 수호', ['공정', '절차', '정의', '원칙', '제도']),
+            ('고난도 분석 역량', ['분석', '논증', '근거', '데이터', '전문성', '난도']),
+            ('사회적 영향력 확대', ['영향', '기여', '공익', '사회', '변화']),
+            ('삶의 안정과 균형', ['안정', '균형', '지속', '조화', '리스크', '보수']),
+            ('지속적 성장과 성취', ['성장', '성취', '도전', '확장']),
+            ('자율적 방향 설계', ['자율', '주도', '실행', '선택']),
+        ]
+        scored: list[tuple[str, int]] = []
+        for label, keywords in categories:
+            score = sum(1 for keyword in keywords if keyword in text)
+            if score > 0:
+                scored.append((label, score))
+        scored.sort(key=lambda item: item[1], reverse=True)
+
+        defaults = ['절차적 정의 수호', '고난도 분석 역량', '삶의 안정과 균형']
+        axis1 = scored[0][0] if scored else defaults[idx % len(defaults)]
+        axis2 = ''
+        for label, _score in scored[1:]:
+            if label != axis1:
+                axis2 = label
+                break
+        if not axis2:
+            for candidate in ['사회적 영향력 확대', '지속적 성장과 성취', '삶의 안정과 균형', '자율적 방향 설계']:
+                if candidate != axis1:
+                    axis2 = candidate
+                    break
+
+        tagline = f'{axis1}와 {axis2}를 중시하는 관점'
+        if len(tagline) > 52:
+            tagline = f'{axis1}·{axis2} 관점'
+        return tagline
+
+    def _normalize_persona_taglines(self, personas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for idx, item in enumerate(personas):
+            persona = dict(item)
+            raw_tagline = str(persona.get('identity_tagline', '') or '')
+            tagline = self._normalize_identity_tagline(raw_tagline)
+            if not self._is_valid_identity_tagline(tagline):
+                tagline = self._build_identity_tagline_fallback(persona, idx)
+            if tagline in seen:
+                tagline = f'{tagline} ({str(persona.get("persona_id", "")).upper()})'
+            seen.add(tagline)
+            persona['identity_tagline'] = tagline
+            normalized.append(persona)
+        return normalized
+
+    @staticmethod
     def _mock_personas() -> list[dict[str, Any]]:
         return [
             PersonaProfile(
                 persona_id='p1',
                 display_name='Echo',
+                identity_tagline='절차적 정의 수호와 제도 신뢰 회복을 중시하는 관점',
                 identity_summary='자율성과 의미를 가장 우선해 스스로 방향을 설계하는 관점',
                 core_career_values='자율성, 의미, 자기표현',
                 risk_challenge_orientation='실험적 도전을 선호',
@@ -2927,6 +3036,7 @@ class TaskRunner:
             PersonaProfile(
                 persona_id='p2',
                 display_name='Nova',
+                identity_tagline='고난도 분석 역량을 축적해 사회적 영향력으로 연결하는 관점',
                 identity_summary='안정성과 지속가능성을 우선해 리스크를 관리하는 관점',
                 core_career_values='안정성, 예측가능성, 지속성',
                 risk_challenge_orientation='계산된 도전을 선호',
@@ -2936,6 +3046,7 @@ class TaskRunner:
             PersonaProfile(
                 persona_id='p3',
                 display_name='Pulse',
+                identity_tagline='의미 있는 공익 기여와 삶의 지속가능한 안정을 추구하는 관점',
                 identity_summary='성장과 성취를 우선해 빠른 학습과 도전을 추구하는 관점',
                 core_career_values='성장, 성취, 도전',
                 risk_challenge_orientation='관계 기반 안전장치 확보 후 도전',
@@ -3091,7 +3202,7 @@ class TaskRunner:
                 else:
                     diversified_cards.append(card)
 
-            if len(diversified_cards) < 2:
+            if len(diversified_cards) < self.PHASE2_EXPLORE_MIN:
                 for pool_card in global_pool:
                     pfp = self._phase2_card_fingerprint(pool_card.get('job_title', ''))
                     if pfp in local_used:
@@ -3099,17 +3210,24 @@ class TaskRunner:
                     diversified_cards.append(pool_card)
                     local_used.add(pfp)
                     global_used_titles.add(pfp)
-                    if len(diversified_cards) >= 2:
+                    if len(diversified_cards) >= self.PHASE2_EXPLORE_MIN:
                         break
 
-            while len(diversified_cards) < 2 and cards:
-                diversified_cards.append(cards[len(diversified_cards) % len(cards)])
+            if len(diversified_cards) < self.PHASE2_EXPLORE_MIN:
+                for card in cards:
+                    cfp = self._phase2_card_fingerprint(card.get('job_title', ''))
+                    if cfp in local_used:
+                        continue
+                    diversified_cards.append(card)
+                    local_used.add(cfp)
+                    if len(diversified_cards) >= self.PHASE2_EXPLORE_MIN:
+                        break
 
             repaired_results.append(
                 {
                     'persona_id': str(result.get('persona_id') or ''),
                     'display_name': str(result.get('display_name') or ''),
-                    'cards': diversified_cards[:6],
+                    'cards': diversified_cards[: self.PHASE2_EXPLORE_MAX],
                 }
             )
 
@@ -3143,7 +3261,7 @@ class TaskRunner:
                 {
                     'persona_id': str(result.get('persona_id') or '').strip(),
                     'display_name': str(result.get('display_name') or '').strip(),
-                    'cards': compact_cards[:6],
+                    'cards': compact_cards[: TaskRunner.PHASE2_EXPLORE_MAX],
                 }
             )
         return {'persona_results': compact_results}
@@ -3380,7 +3498,12 @@ class TaskRunner:
                     }
                 )
 
-            target_count = min(TaskRunner.PHASE2_CANDIDATE_TARGET, max(3, len(persona_pool)))
+            if len(persona_pool) >= TaskRunner.PHASE2_EXPLORE_MAX:
+                target_count = TaskRunner.PHASE2_EXPLORE_MAX
+            elif len(persona_pool) >= TaskRunner.PHASE2_EXPLORE_MIN:
+                target_count = TaskRunner.PHASE2_EXPLORE_MIN
+            else:
+                target_count = min(TaskRunner.PHASE2_EXPLORE_MIN, max(1, len(persona_pool)))
             for item in persona_pool:
                 if len(next_candidates) >= target_count:
                     break
