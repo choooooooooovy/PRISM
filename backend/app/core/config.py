@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     app_name: str = Field(default='PRISM API', alias='APP_NAME')
     app_env: str = Field(default='dev', alias='APP_ENV')
-    app_debug: bool = Field(default=True, alias='APP_DEBUG')
+    app_debug: bool = Field(default=False, alias='APP_DEBUG')
     api_host: str = Field(default='0.0.0.0', alias='API_HOST')
     api_port: int = Field(default=8000, alias='API_PORT')
     cors_allow_origins: str = Field(
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
         alias='CORS_ALLOW_ORIGIN_REGEX',
     )
     purge_conversation_on_new_session: bool = Field(
-        default=True,
+        default=False,
         alias='PURGE_CONVERSATION_ON_NEW_SESSION',
     )
 

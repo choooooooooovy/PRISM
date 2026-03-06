@@ -95,13 +95,13 @@ export default function Phase4_1PreparationProgram() {
   return (
     <Layout>
       <div className="flex-1 overflow-y-auto p-8" style={{ marginLeft: '260px' }}>
-        <div className="max-w-5xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           <div className="mb-6">
             <span className="text-[13px] mb-1 block" style={{ color: 'var(--color-accent)' }}>
               Phase 4: 실행 계획
             </span>
             <h1 className="mb-3" style={{ color: 'var(--color-text-primary)' }}>
-              준비 방식 / 프로그램 선택
+              준비 방식 / 프로그램 작성
             </h1>
             <div
               className="p-4 rounded-lg"

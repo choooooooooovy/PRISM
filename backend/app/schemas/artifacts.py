@@ -243,7 +243,7 @@ class Phase4RoadmapSnapshot(APIModel):
 
 
 class Phase4RoadmapRow(APIModel):
-    id: str
+    id: str | None = None
     action: str
     deliverable: str = ''
     timing: str = ''

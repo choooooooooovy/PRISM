@@ -181,7 +181,7 @@ export default function Phase4_2RealityInterview() {
                 이번 단계에서 할 일
               </p>
               <p className="text-[14px] leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
-                인터뷰를 진행한 뒤, 현실 조건 요약을 확인/수정합니다.
+                인터뷰를 진행한 뒤, 현실 조건 요약을 수정/확인합니다.
               </p>
               <div className="mt-3 flex justify-end">
                 <button

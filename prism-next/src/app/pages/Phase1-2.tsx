@@ -73,7 +73,7 @@ export default function Phase1_2PersonaGeneration() {
   return (
     <Layout>
       <div className="flex-1 overflow-y-auto p-8" style={{ marginLeft: '260px', marginRight: '360px' }}>
-        <div className="max-w-3xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           <div className="mb-8">
             <span className="text-[13px] mb-1 block" style={{ color: 'var(--color-accent)' }}>
               Phase 1: 자기 이해

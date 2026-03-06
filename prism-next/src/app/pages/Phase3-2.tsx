@@ -194,7 +194,7 @@ export default function Phase3_2Prioritization() {
   return (
     <Layout>
       <div className="flex-1 overflow-y-auto p-8" style={{ marginLeft: '260px' }}>
-        <div className="max-w-5xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           <div className="mb-6">
             <span className="text-[13px] mb-1 block" style={{ color: 'var(--color-accent)' }}>
               Phase 3: 우선순위 결정

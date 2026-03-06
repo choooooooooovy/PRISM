@@ -189,7 +189,7 @@ function toReadableLines(text: string, max = 5): string[] {
 }
 
 function normalizeTimingText(text: string): string {
-  const normalized = String(text || '').trim();
+  const normalized = stripInternalIdTokens(String(text || '').trim());
   if (!normalized) return '-';
   const withoutRanges = normalized.replace(
     /(월|화|수|목|금|토|일)(요일)?\s*[~\-]\s*(월|화|수|목|금|토|일)(요일)?/g,
@@ -198,6 +198,17 @@ function normalizeTimingText(text: string): string {
   const withoutDays = withoutRanges.replace(/\b(월|화|수|목|금|토|일)(요일)?\b/g, '');
   const cleaned = withoutDays.replace(/[,/]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/[-~]+$/g, '').trim();
   return cleaned || '-';
+}
+
+function stripInternalIdTokens(text: string): string {
+  const value = String(text || '').trim();
+  if (!value) return '';
+  return value
+    .replace(/\broadmap[-_\s]?\d+\b[:：]?/gi, '')
+    .replace(/\br\d+\b[:：]?/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\-–—,:;)\]]+\s*/, '')
+    .trim();
 }
 
 export default function ReportPage() {
@@ -606,9 +617,9 @@ export default function ReportPage() {
                 {(phase4RoadmapRows?.rows || []).map((row, idx) => (
                   <div key={row.id || idx} className="text-[13px] leading-relaxed" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.85 }}>
                     <p style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>
-                      {idx + 1}. {row.action || '-'}
+                      {idx + 1}. {stripInternalIdTokens(row.action || '') || '-'}
                     </p>
-                    <p>산출물: {row.deliverable || '-'}</p>
+                    <p>산출물: {stripInternalIdTokens(row.deliverable || '') || '-'}</p>
                     <p>시기: {normalizeTimingText(row.timing)}</p>
                   </div>
                 ))}

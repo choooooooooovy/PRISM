@@ -1550,7 +1550,7 @@ class TaskRunner:
         if roadmap_rows_artifact and isinstance(roadmap_rows_artifact.payload, dict):
             rows_raw = roadmap_rows_artifact.payload.get('rows')
             if isinstance(rows_raw, list):
-                current_rows = rows_raw
+                current_rows = self._phase4_rows_for_model_prompt(rows_raw)
 
         parsed, prompt_run = await self.openai_service.run_structured(
             db=db,
@@ -1565,11 +1565,14 @@ class TaskRunner:
                 'All user-facing text values must be Korean.\n'
                 'assistant_message should be one concise Korean turn with actionable guidance.\n'
                 'roadmap_snapshot should update immediate_action, near_term_goal, key_risk_and_response.\n'
-                'roadmap_rows must contain actionable rows with fields: id, action, deliverable, timing.\n'
+                'roadmap_rows must contain actionable rows with fields: action, deliverable, timing.\n'
+                'Do not output internal labels such as r1/r2/roadmap-1 in any user-facing text.\n'
                 'timing should use practical week/month windows (e.g., "1~2주", "3~4주", "1개월 내"), '
                 'and should not include day-of-week granularity.\n'
-                'Use selected alternatives and phase4 execution plan as key references when available, '
-                'but adapt flexibly to user intent (do not treat them as hard constraints).\n'
+                'Prioritize coherence with selected alternatives and phase4 execution plan when available.\n'
+                'Each roadmap row should be traceable to selected alternative context or phase4-1 plan items.\n'
+                'Avoid generic standalone advice. Include concrete object/scope in each action.\n'
+                'Adapt flexibly to user intent, but keep the roadmap aligned with selected alternatives.\n'
                 'If the user asks clarification, answer directly with concrete detail rather than generic restatement.\n'
                 'Avoid vague placeholders like "주요 이해관계자" unless you provide concrete examples.\n'
                 'Assume user is a preparation-stage individual. Prefer practical beginner-level actions '
@@ -1594,13 +1597,11 @@ class TaskRunner:
                 },
                 'roadmap_rows': [
                     {
-                        'id': 'roadmap-1',
                         'action': '이번 주 내 목표 대안 2개에 대한 정보 인터뷰 1회 진행',
                         'deliverable': '인터뷰 요약 1페이지',
                         'timing': '1주 이내',
                     },
                     {
-                        'id': 'roadmap-2',
                         'action': '2주 동안 대안별 소규모 실험 과제 1개씩 수행',
                         'deliverable': '실험 결과 비교 노트',
                         'timing': '2주',
@@ -1637,7 +1638,7 @@ class TaskRunner:
         for idx, row in enumerate(refined_rows, start=1):
             normalized_rows.append(
                 Phase4RoadmapRow(
-                    id=str(row.id).strip() or f'roadmap-{idx}',
+                    id=f'roadmap-{idx}',
                     action=str(row.action).strip(),
                     deliverable=str(row.deliverable).strip(),
                     timing=str(row.timing).strip(),
@@ -2616,19 +2617,14 @@ class TaskRunner:
                 ),
             )
 
-        generic_or_hard_patterns = [
-            '데이터 수집 및 정리',
-            '정책 협의체',
-            '국제 정책 평가',
-            '이해관계자와의 소통 강화',
+        # Keep hard replacement only for clearly unusable short/generic actions.
+        hard_replace_exact_phrases = {
             '핵심 목표를 달성',
             '실행 계획을 강화',
             '체계 구축',
-            '전문 과정 참여',
-            '변화 관리 전문 과정',
             '준비를 강화',
             '역량을 강화',
-        ]
+        }
 
         refined: list[Phase4RoadmapRow] = []
         template_index = 0
@@ -2637,10 +2633,11 @@ class TaskRunner:
             deliverable = str(row.deliverable or '').strip()
             timing = str(row.timing or '').strip()
 
+            compact_action = re.sub(r'\s+', ' ', action).strip()
             needs_replace = (
                 not action
-                or len(action) < 14
-                or any(pattern in action for pattern in generic_or_hard_patterns)
+                or len(compact_action) < 10
+                or compact_action in hard_replace_exact_phrases
             )
             if needs_replace:
                 tpl = practical_templates[min(template_index, len(practical_templates) - 1)]
@@ -2654,9 +2651,9 @@ class TaskRunner:
 
             refined.append(
                 Phase4RoadmapRow(
-                    id=str(row.id).strip() or f'roadmap-{idx}',
-                    action=action,
-                    deliverable=deliverable,
+                    id=f'roadmap-{idx}',
+                    action=TaskRunner._phase4_strip_internal_id_tokens(action),
+                    deliverable=TaskRunner._phase4_strip_internal_id_tokens(deliverable),
                     timing=TaskRunner._phase4_normalize_timing_text(timing),
                 )
             )
@@ -2665,8 +2662,39 @@ class TaskRunner:
         return refined[:5]
 
     @staticmethod
+    def _phase4_rows_for_model_prompt(rows_raw: list[Any]) -> list[dict[str, str]]:
+        compact: list[dict[str, str]] = []
+        for raw in rows_raw:
+            if not isinstance(raw, dict):
+                continue
+            action = TaskRunner._phase4_strip_internal_id_tokens(str(raw.get('action') or '').strip())
+            deliverable = TaskRunner._phase4_strip_internal_id_tokens(str(raw.get('deliverable') or '').strip())
+            timing = TaskRunner._phase4_normalize_timing_text(str(raw.get('timing') or '').strip())
+            if not action and not deliverable and not timing:
+                continue
+            compact.append(
+                {
+                    'action': action,
+                    'deliverable': deliverable,
+                    'timing': timing,
+                }
+            )
+        return compact[:5]
+
+    @staticmethod
+    def _phase4_strip_internal_id_tokens(text: str) -> str:
+        value = str(text or '').strip()
+        if not value:
+            return ''
+        value = re.sub(r'\broadmap[-_\s]?\d+\b[:：]?', '', value, flags=re.I)
+        value = re.sub(r'\br\d+\b[:：]?', '', value, flags=re.I)
+        value = re.sub(r'\s{2,}', ' ', value).strip()
+        value = re.sub(r'^[\-–—,:;)\]]+\s*', '', value).strip()
+        return value
+
+    @staticmethod
     def _phase4_normalize_timing_text(timing: str) -> str:
-        text = str(timing or '').strip()
+        text = TaskRunner._phase4_strip_internal_id_tokens(timing)
         if not text:
             return '1~2주'
         # Remove explicit day-of-week details for better realism.

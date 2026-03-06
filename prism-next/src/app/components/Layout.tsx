@@ -39,7 +39,7 @@ export function Layout({ children }: LayoutProps) {
       substeps: [
         {
           id: 'phase2-1',
-          label: '2-1 페르소나 기반 탐색',
+          label: '2-1 직업/대안 정보 탐색',
           path: '/phase2-1',
           status: 'active' as SubstepStatus,
         },
@@ -58,7 +58,7 @@ export function Layout({ children }: LayoutProps) {
       substeps: [
         {
           id: 'phase3-1',
-          label: '3-1 Benefit/Cost 작성',
+          label: '3-1 Benefit/Cost 표 작성',
           path: '/phase3-1',
           status: 'active' as SubstepStatus,
         },

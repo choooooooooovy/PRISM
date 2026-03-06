@@ -28,6 +28,15 @@ interface PersonaBoard {
   jobs: JobCard[];
 }
 
+function clampStyle(lines: number): React.CSSProperties {
+  return {
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: lines,
+    overflow: 'hidden',
+  } as React.CSSProperties;
+}
+
 export default function Phase2_1PersonaExploration() {
   const [explored, setExplored] = React.useState(false);
   const [isGenerating, setIsGenerating] = React.useState(false);
@@ -226,7 +235,7 @@ export default function Phase2_1PersonaExploration() {
         className="flex-1 overflow-y-auto p-8"
         style={{ marginLeft: '260px', marginRight: '360px' }}
       >
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           {/* Header + instruction */}
           <div className="mb-6">
             <span
@@ -294,9 +303,10 @@ export default function Phase2_1PersonaExploration() {
             <>
               <div className="grid grid-cols-3 gap-5 mb-8">
                 {boards.map(board => (
-                  <div key={board.id}>
+                  <div key={board.id} className="flex flex-col">
                     {/* Board header */}
-                    <div className="flex items-center gap-2 mb-3">
+                    <div className="mb-3 min-h-[5.2rem]">
+                      <div className="flex items-center gap-2 mb-2">
                       {(() => {
                         const style = getPersonaStyle(board.id, board.name);
                         return (
@@ -327,78 +337,86 @@ export default function Phase2_1PersonaExploration() {
                           </>
                         );
                       })()}
+                      </div>
+                      {(personaTaglineById[board.id] || board.tagline) && (
+                        <p
+                          className="text-[12px]"
+                          style={{
+                            color: 'var(--color-text-secondary)',
+                            lineHeight: 1.7,
+                            ...clampStyle(2),
+                          }}
+                        >
+                          {personaTaglineById[board.id] || board.tagline}
+                        </p>
+                      )}
                     </div>
-                    {(personaTaglineById[board.id] || board.tagline) && (
-                      <p
-                        className="text-[12px] mb-3"
-                        style={{ color: 'var(--color-text-secondary)', lineHeight: 1.7 }}
-                      >
-                        {personaTaglineById[board.id] || board.tagline}
-                      </p>
-                    )}
 
                     {/* Job cards */}
-                    <div className="space-y-3">
+                    <div className="grid gap-3 auto-rows-fr">
                       {board.jobs.map(job => {
                         const isSelected = selectedJobId === job.id;
                         return (
                           <div
                             key={job.id}
                             onClick={() => setSelectedJobId(isSelected ? null : job.id)}
-                            className="p-4 rounded-xl cursor-pointer transition-all"
+                            className="p-4 rounded-xl cursor-pointer transition-all flex flex-col"
                             style={{
                               backgroundColor: 'var(--color-bg-card)',
                               border: isSelected
                                 ? '1.5px solid var(--color-accent)'
                                 : '1px solid var(--color-border)',
                               boxShadow: 'var(--shadow-card)',
+                              minHeight: '31.5rem',
                             }}
                           >
                             {/* Job title — larger + bolder */}
-                            <h4
-                              className="mb-3"
-                              style={{
-                                color: 'var(--color-text-primary)',
-                                fontSize: '15px',
-                                fontWeight: 700,
-                                lineHeight: 1.3,
-                              }}
-                            >
-                              {job.title}
-                            </h4>
+                              <h4
+                                className="mb-3"
+                                style={{
+                                  color: 'var(--color-text-primary)',
+                                  fontSize: '15px',
+                                  fontWeight: 700,
+                                  lineHeight: 1.3,
+                                  minHeight: '3.9rem',
+                                  ...clampStyle(3),
+                                }}
+                              >
+                                {job.title}
+                              </h4>
 
                             {/* Info rows — section labels emphasized */}
                             <div
-                              className="space-y-3 text-[13px]"
+                              className="space-y-3 text-[13px] flex-1"
                               style={{ lineHeight: '1.72' }}
                             >
-                              <div>
+                              <div style={{ minHeight: '9.5rem' }}>
                                 <span
                                   style={{ color: 'var(--color-text-primary)', fontWeight: 600, display: 'block', marginBottom: '1px' }}
                                 >
                                   하는 일
                                 </span>
-                                <span style={{ color: 'var(--color-text-secondary)' }}>
+                                <span style={{ color: 'var(--color-text-secondary)', ...clampStyle(5) }}>
                                   {job.tasks}
                                 </span>
                               </div>
-                              <div>
+                              <div style={{ minHeight: '7.7rem' }}>
                                 <span
                                   style={{ color: 'var(--color-text-primary)', fontWeight: 600, display: 'block', marginBottom: '1px' }}
                                 >
                                   근무 환경
                                 </span>
-                                <span style={{ color: 'var(--color-text-secondary)' }}>
+                                <span style={{ color: 'var(--color-text-secondary)', ...clampStyle(4) }}>
                                   {job.environment}
                                 </span>
                               </div>
-                              <div>
+                              <div style={{ minHeight: '7.7rem' }}>
                                 <span
                                   style={{ color: 'var(--color-text-primary)', fontWeight: 600, display: 'block', marginBottom: '1px' }}
                                 >
                                   전망
                                 </span>
-                                <span style={{ color: 'var(--color-text-secondary)' }}>
+                                <span style={{ color: 'var(--color-text-secondary)', ...clampStyle(4) }}>
                                   {job.outlook}
                                 </span>
                               </div>

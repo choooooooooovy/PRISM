@@ -16,12 +16,23 @@ interface RoadmapRow {
   timing: string;
 }
 
+function stripInternalIdTokens(text: string): string {
+  const value = String(text || '').trim();
+  if (!value) return '';
+  return value
+    .replace(/\broadmap[-_\s]?\d+\b[:：]?/gi, '')
+    .replace(/\br\d+\b[:：]?/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\-–—,:;)\]]+\s*/, '')
+    .trim();
+}
+
 function normalizeRows(rows?: RoadmapRow[]): RoadmapRow[] {
   return (rows || []).map((row, idx) => ({
     id: row.id || `roadmap-${idx + 1}`,
-    action: row.action || '',
-    deliverable: row.deliverable || '',
-    timing: normalizeTimingText(row.timing || ''),
+    action: stripInternalIdTokens(row.action || ''),
+    deliverable: stripInternalIdTokens(row.deliverable || ''),
+    timing: normalizeTimingText(stripInternalIdTokens(row.timing || '')),
   }));
 }
 
@@ -203,7 +214,7 @@ export default function Phase4_3Roadmap() {
   return (
     <Layout>
       <div className="flex-1 overflow-y-auto p-8" style={{ marginLeft: '260px' }}>
-        <div className="max-w-5xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           <div className="mb-6">
             <span className="text-[13px] mb-1 block" style={{ color: 'var(--color-accent)' }}>
               Phase 4: 실행 계획

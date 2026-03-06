@@ -153,7 +153,7 @@ export default function Phase2_2AlternativeGeneration() {
         className="flex-1 overflow-y-auto p-8"
         style={{ marginLeft: '260px' }}
       >
-        <div className="max-w-4xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           {/* Header + instruction */}
           <div className="mb-6">
             <span

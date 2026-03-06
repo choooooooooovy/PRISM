@@ -271,17 +271,17 @@ export default function Phase3_1BenefitCost() {
         const sourceAlternatives: AlternativePayload[] = draftArtifact?.alternatives?.length
           ? draftArtifact.alternatives
           : (candidateArtifact?.unified_candidates || []).slice(0, 3).map(item => ({
-              alternative_id: item.id,
-              alternative_title: item.title,
-              comments: [],
-              cells: PERSPECTIVES.map(p => ({
-                perspective: p.id,
-                benefits: '',
-                costs: '',
-                benefit_comments: [],
-                cost_comments: [],
-              })),
-            }));
+            alternative_id: item.id,
+            alternative_title: item.title,
+            comments: [],
+            cells: PERSPECTIVES.map(p => ({
+              perspective: p.id,
+              benefits: '',
+              costs: '',
+              benefit_comments: [],
+              cost_comments: [],
+            })),
+          }));
 
         const nextAlternatives = sourceAlternatives.map(item => ({
           id: item.alternative_id,
@@ -391,7 +391,7 @@ export default function Phase3_1BenefitCost() {
   return (
     <Layout>
       <div className="flex-1 overflow-y-auto p-8" style={{ marginLeft: '260px' }}>
-        <div className="max-w-5xl mx-auto">
+        <div className="max-w-6xl mx-auto">
           <div className="mb-6">
             <span className="text-[13px] mb-1 block" style={{ color: 'var(--color-accent)' }}>
               Phase 3: 우선순위 결정
@@ -407,9 +407,7 @@ export default function Phase3_1BenefitCost() {
                 이번 단계에서 할 일
               </p>
               <p className="text-[14px] leading-relaxed" style={{ color: 'var(--color-text-secondary)' }}>
-                각 관점의 Benefit/Cost 셀에서 페르소나 코멘트를 선택하고, 필요한 내용을 직접 작성해 확정하세요.
-                <br />
-                선택하지 않거나 직접 작성만 해도 됩니다.
+                페르소나 기반 코멘트를 참고하여, 각 대안의 자신/주요 타인 관점 Benefit·Cost를 정리하고 요약을 생성해 비교 준비를 완료하세요.
               </p>
             </div>
           </div>

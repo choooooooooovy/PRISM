@@ -28,23 +28,50 @@ interface LeftNavProps {
   phaseGroups: PhaseGroup[];
 }
 
+const normalizePath = (path: string) => {
+  if (!path) return '/';
+  return path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path;
+};
+
 export function LeftNav({ phaseGroups }: LeftNavProps) {
   const pathname = usePathname();
+  const normalizedPath = normalizePath(pathname);
+  const orderedSubsteps = React.useMemo(
+    () => phaseGroups.flatMap(group => group.substeps),
+    [phaseGroups],
+  );
+  const currentStepIndex = React.useMemo(() => {
+    if (normalizedPath === '/report') return orderedSubsteps.length;
+    return orderedSubsteps.findIndex(step => normalizePath(step.path) === normalizedPath);
+  }, [normalizedPath, orderedSubsteps]);
+
+  const getEffectiveStatus = React.useCallback(
+    (stepPath: string): SubstepStatus => {
+      const stepIndex = orderedSubsteps.findIndex(step => normalizePath(step.path) === normalizePath(stepPath));
+      if (stepIndex === -1) return 'upcoming';
+      if (currentStepIndex === -1) return 'upcoming';
+      if (currentStepIndex >= orderedSubsteps.length) return 'completed';
+      if (stepIndex < currentStepIndex) return 'completed';
+      if (stepIndex === currentStepIndex) return 'active';
+      return 'upcoming';
+    },
+    [currentStepIndex, orderedSubsteps],
+  );
 
   const [expandedPhases, setExpandedPhases] = React.useState<string[]>(() => {
     return phaseGroups
-      .filter(group => group.substeps.some(s => s.path === pathname))
+      .filter(group => group.substeps.some(s => normalizePath(s.path) === normalizedPath))
       .map(group => group.id);
   });
 
   React.useEffect(() => {
     const activeGroup = phaseGroups.find(group =>
-      group.substeps.some(s => s.path === pathname)
+      group.substeps.some(s => getEffectiveStatus(s.path) === 'active')
     );
     if (activeGroup && !expandedPhases.includes(activeGroup.id)) {
       setExpandedPhases(prev => [...prev, activeGroup.id]);
     }
-  }, [pathname, phaseGroups]);
+  }, [phaseGroups, getEffectiveStatus, expandedPhases]);
 
   const togglePhase = (phaseId: string) => {
     setExpandedPhases(prev =>
@@ -54,10 +81,9 @@ export function LeftNav({ phaseGroups }: LeftNavProps) {
     );
   };
 
-  const completedTotal = phaseGroups.reduce(
-    (acc, g) => acc + g.substeps.filter(s => s.status === 'completed').length,
-    0
-  );
+  const completedTotal = phaseGroups.reduce((acc, g) => {
+    return acc + g.substeps.filter(s => getEffectiveStatus(s.path) === 'completed').length;
+  }, 0);
   const totalSteps = phaseGroups.reduce(
     (acc, g) => acc + g.substeps.length,
     0
@@ -77,10 +103,10 @@ export function LeftNav({ phaseGroups }: LeftNavProps) {
           {phaseGroups.map((group) => {
             const isExpanded = expandedPhases.includes(group.id);
             const hasActiveChild = group.substeps.some(
-              s => s.path === pathname
+              s => getEffectiveStatus(s.path) === 'active'
             );
             const allCompleted = group.substeps.every(
-              s => s.status === 'completed'
+              s => getEffectiveStatus(s.path) === 'completed'
             );
             const Icon = group.icon;
 
@@ -157,8 +183,9 @@ export function LeftNav({ phaseGroups }: LeftNavProps) {
                     style={{ borderLeft: '1px solid var(--color-border)' }}
                   >
                     {group.substeps.map((substep) => {
-                      const isActive = pathname === substep.path;
-                      const isCompleted = substep.status === 'completed';
+                      const isActive = normalizePath(substep.path) === normalizedPath;
+                      const effectiveStatus = getEffectiveStatus(substep.path);
+                      const isCompleted = effectiveStatus === 'completed';
 
                       return (
                         <Link key={substep.id} href={substep.path} className="block">
