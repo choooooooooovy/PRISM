@@ -151,7 +151,7 @@ export default function Phase1SelfUnderstanding() {
       const result = await runTask('phase1_interview_turn', { user_message: '' });
       const assistantMessage = String(
         (result.output_json?.assistant_message as string | undefined) ??
-          '좋아요. 먼저 최근 진로 고민이 크게 느껴졌던 장면을 이야기해 주세요.',
+        '좋아요. 먼저 최근 진로 고민이 크게 느껴졌던 장면을 이야기해 주세요.',
       );
       const snapshot = (result.output_json?.structured_snapshot as Phase1StructuredSummary | undefined) ?? null;
       const suggested = (result.output_json?.suggested_fields as string[] | undefined) ?? [];
@@ -188,7 +188,7 @@ export default function Phase1SelfUnderstanding() {
       const result = await runTask('phase1_interview_turn', { user_message: message });
       const assistantMessage = String(
         (result.output_json?.assistant_message as string | undefined) ??
-          '좋아요. 계속 진행해볼게요.',
+        '좋아요. 계속 진행해볼게요.',
       );
       const snapshot = (result.output_json?.structured_snapshot as Phase1StructuredSummary | undefined) ?? null;
       const suggested = (result.output_json?.suggested_fields as string[] | undefined) ?? [];
@@ -236,7 +236,7 @@ export default function Phase1SelfUnderstanding() {
   return (
     <Layout>
       <div className="flex-1 overflow-y-auto p-8" style={{ marginLeft: '260px' }}>
-        <div className="max-w-6xl mx-auto">
+        <div className="max-w-5xl mx-auto">
           <div className="mb-6">
             <span className="text-[13px] mb-1 block" style={{ color: 'var(--color-accent)' }}>
               Phase 1: 자기 이해
@@ -354,8 +354,8 @@ export default function Phase1SelfUnderstanding() {
                     !hasStarted
                       ? '먼저 시작 버튼을 눌러 인터뷰를 시작하세요.'
                       : isInterviewComplete
-                      ? '인터뷰가 완료되었습니다. 사용자 정보 수정 화면에서 내용을 확인하세요.'
-                      : '답변을 입력하세요...'
+                        ? '인터뷰가 완료되었습니다. 현실 조건 요약 화면에서 내용을 확인하세요.'
+                        : '답변을 입력하세요...'
                   }
                   disabled={isSubmitting || isLoading || !hasStarted || isInterviewComplete}
                   sendLabel={isSubmitting ? '전송 중...' : '전송'}
