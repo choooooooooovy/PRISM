@@ -88,6 +88,7 @@ export default function Phase2_2AlternativeGeneration() {
           getLatestArtifact<{
             personas?: Array<{
               persona_id: string;
+              identity_label?: string;
               identity_tagline?: string;
               identity_summary?: string;
               core_career_values?: string;
@@ -145,6 +146,15 @@ export default function Phase2_2AlternativeGeneration() {
 
   const updateTitle = (id: string, title: string) => {
     setItems(prev => prev.map(i => (i.id === id ? { ...i, title } : i)));
+  };
+
+  const resolveProposerColor = (proposer: string) => {
+    const matches = personaSuggestionState.filter(
+      ps => proposer.includes(ps.label) || proposer.includes(ps.persona),
+    );
+    if (matches.length !== 1) return null;
+    const matched = matches[0];
+    return getPersonaStyle(matched.persona, matched.label);
   };
 
   return (
@@ -314,7 +324,16 @@ export default function Phase2_2AlternativeGeneration() {
                         })()}
                       </div>
                       {personaTaglineById[ps.persona] && (
-                        <p className="text-[11px] mb-2.5" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.65 }}>
+                        <p
+                          className="text-[11px] mb-2.5"
+                          style={{
+                            color: 'var(--color-text-secondary)',
+                            lineHeight: 1.65,
+                            whiteSpace: 'normal',
+                            wordBreak: 'break-word',
+                            overflowWrap: 'anywhere',
+                          }}
+                        >
                           {personaTaglineById[ps.persona]}
                         </p>
                       )}
@@ -455,11 +474,22 @@ export default function Phase2_2AlternativeGeneration() {
                   {/* Proposer label — small inline text */}
                   <span
                     className="text-[11px] flex-shrink-0 px-1.5 py-0.5 rounded"
-                    style={{
-                      color: 'var(--color-text-secondary)',
-                      backgroundColor: 'var(--color-bg-surface)',
-                      border: '1px solid var(--color-border)',
-                    }}
+                    style={(() => {
+                      const style = resolveProposerColor(item.proposer);
+                      if (!style) {
+                        return {
+                          color: 'var(--color-text-secondary)',
+                          backgroundColor: 'var(--color-bg-surface)',
+                          border: '1px solid var(--color-border)',
+                        };
+                      }
+                      return {
+                        color: style.accent,
+                        backgroundColor: style.softBg,
+                        border: `1px solid ${style.border}`,
+                        fontWeight: 600,
+                      };
+                    })()}
                   >
                     {item.proposer}
                   </span>
@@ -501,7 +531,8 @@ export default function Phase2_2AlternativeGeneration() {
 
           <FooterStepNav
             className="mt-6 flex justify-between"
-            nextDisabled={items.length < MIN_ALTS || isSubmittingNext}
+            nextDisabled={items.length < MIN_ALTS || items.length > MAX_ALTS || isSubmittingNext}
+            isLoading={isSubmittingNext}
             onBeforeNext={async () => {
               setIsSubmittingNext(true);
               setSubmitError('');

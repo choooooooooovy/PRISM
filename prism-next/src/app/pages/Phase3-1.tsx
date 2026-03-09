@@ -166,17 +166,9 @@ function resolveVoiceVariant(personaId: string, displayName: string): PersonaVoi
 }
 
 function groupOptionsByPersona(options: PersonaCommentOption[]): Array<{ personaId: string; options: PersonaCommentOption[] }> {
-  const grouped = new Map<string, PersonaCommentOption[]>();
-  options.forEach(option => {
-    const personaId = String(option.persona_id || '').trim();
-    if (!personaId) return;
-    const list = grouped.get(personaId) || [];
-    list.push(option);
-    grouped.set(personaId, list);
-  });
-  return Array.from(grouped.entries()).map(([personaId, groupedOptions]) => ({
-    personaId,
-    options: groupedOptions,
+  return uniquePersonaOptions(options).map(option => ({
+    personaId: option.persona_id,
+    options: [option],
   }));
 }
 
@@ -269,6 +261,7 @@ export default function Phase3_1BenefitCost() {
           getLatestArtifact<{
             personas?: Array<{
               persona_id: string;
+              identity_label?: string;
               identity_tagline?: string;
               identity_summary?: string;
               core_career_values?: string;
@@ -389,6 +382,40 @@ export default function Phase3_1BenefitCost() {
   };
 
   const selectedAltState = stateByAlt[selectedAltId];
+
+  const gateStatus = React.useMemo(() => {
+    const missingDrafts: string[] = [];
+    const missingSummaries: string[] = [];
+
+    alternatives.forEach(alt => {
+      const altState = stateByAlt[alt.id];
+      if (!altState) {
+        missingDrafts.push(`${alt.title} (자신, 주요 타인)`);
+        missingSummaries.push(`${alt.title} (자신)`, `${alt.title} (주요 타인)`);
+        return;
+      }
+
+      PERSPECTIVES.forEach(p => {
+        const cell = altState[p.id];
+        if (!cell || !isPerspectiveDraftComplete(cell)) {
+          missingDrafts.push(`${alt.title} (${p.label})`);
+        }
+
+        const { benefitText, costText } = getPerspectiveDraftTexts(cell || emptyCellState());
+        const expectedHash = buildSummarySourceHash(benefitText, costText);
+        const savedSummary = summaryByAlt[alt.id]?.[p.id]?.trim() || '';
+        const savedHash = summarySourceHashByAlt[alt.id]?.[p.id] || '';
+        if (!savedSummary || savedHash !== expectedHash) {
+          missingSummaries.push(`${alt.title} (${p.label})`);
+        }
+      });
+    });
+
+    return {
+      missingDrafts: dedupe(missingDrafts),
+      missingSummaries: dedupe(missingSummaries),
+    };
+  }, [alternatives, stateByAlt, summaryByAlt, summarySourceHashByAlt]);
 
   const generatePerspectiveSummary = (altId: string, perspective: Perspective) => {
     const cell = stateByAlt[altId]?.[perspective];
@@ -632,7 +659,8 @@ export default function Phase3_1BenefitCost() {
                                                       fontWeight: 500,
                                                       lineHeight: 1.3,
                                                       whiteSpace: 'normal',
-                                                      wordBreak: 'keep-all',
+                                                      wordBreak: 'break-word',
+                                                      overflowWrap: 'anywhere',
                                                     }}
                                                   >
                                                     {personaTaglineById[option.persona_id]}
@@ -806,44 +834,25 @@ export default function Phase3_1BenefitCost() {
 
           <FooterStepNav
             className="mt-8 flex justify-between"
-            nextDisabled={isSubmittingNext || alternatives.length === 0}
+            nextDisabled={
+              isSubmittingNext ||
+              alternatives.length === 0 ||
+              gateStatus.missingDrafts.length > 0 ||
+              gateStatus.missingSummaries.length > 0
+            }
             onBeforeNext={async () => {
               setErrorMessage('');
               setIsSubmittingNext(true);
               try {
-                const missing: string[] = [];
-                const missingSummaries: string[] = [];
-                alternatives.forEach(alt => {
-                  const altState = stateByAlt[alt.id];
-                  const selfCell = altState?.self || emptyCellState();
-                  const othersCell = altState?.others || emptyCellState();
-                  const lacking: string[] = [];
-                  if (!isPerspectiveDraftComplete(selfCell)) lacking.push('자신');
-                  if (!isPerspectiveDraftComplete(othersCell)) lacking.push('주요 타인');
-                  if (lacking.length) {
-                    missing.push(`${alt.title} (${lacking.join(', ')})`);
-                  }
-
-                  PERSPECTIVES.forEach(p => {
-                    const cell = altState?.[p.id] || emptyCellState();
-                    const { benefitText, costText } = getPerspectiveDraftTexts(cell);
-                    const expectedHash = buildSummarySourceHash(benefitText, costText);
-                    const savedSummary = summaryByAlt[alt.id]?.[p.id]?.trim() || '';
-                    const savedHash = summarySourceHashByAlt[alt.id]?.[p.id] || '';
-                    if (!savedSummary || savedHash !== expectedHash) {
-                      missingSummaries.push(`${alt.title} (${p.label})`);
-                    }
-                  });
-                });
-                if (missing.length > 0) {
+                if (gateStatus.missingDrafts.length > 0) {
                   setErrorMessage(
-                    `모든 대안에서 Benefit/Cost 초안이 채워져야 다음 단계로 이동할 수 있습니다. 미완성: ${missing.join(' / ')}`,
+                    `모든 대안에서 Benefit/Cost 초안이 채워져야 다음 단계로 이동할 수 있습니다. 미완성: ${gateStatus.missingDrafts.join(' / ')}`,
                   );
                   return false;
                 }
-                if (missingSummaries.length > 0) {
+                if (gateStatus.missingSummaries.length > 0) {
                   setErrorMessage(
-                    `모든 대안의 자신/주요 타인 관점에서 요약 생성 버튼을 눌러 최신 요약을 생성해야 합니다. 미완성: ${missingSummaries.join(' / ')}`,
+                    `모든 대안의 자신/주요 타인 관점에서 요약 생성 버튼을 눌러 최신 요약을 생성해야 합니다. 미완성: ${gateStatus.missingSummaries.join(' / ')}`,
                   );
                   return false;
                 }

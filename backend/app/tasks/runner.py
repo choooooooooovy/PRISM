@@ -802,8 +802,8 @@ class TaskRunner:
                 'Do not use person names.\n'
                 'Do not define personas as jobs/occupations (e.g., 개발자, 디자이너, 전문가).\n'
                 'Each persona must prioritize a clearly different core value lens.\n'
-                'identity_tagline must be a concise Korean label ending with "관점".\n'
-                'identity_tagline length should be about 18-34 chars and should be noun-phrase style.\n'
+                'identity_label must be a concise Korean label ending with "관점".\n'
+                'identity_label length should be about 18-34 chars and should be noun-phrase style.\n'
                 'Do not use broken endings such as "본다 관점", "함께 관점", "... 관점".\n'
                 'Use both interview_utterances and structured_summary as input context.\n'
                 'However, preserve nuance from interview_utterances as primary evidence.\n'
@@ -816,7 +816,7 @@ class TaskRunner:
                     'display_name_style': 'English codename, one token, non-human style',
                     'value_diversity': '3 personas should represent distinct core value priorities',
                     'occupation_free_identity': 'identity_summary must describe value perspective, not job title',
-                    'identity_tagline_format': 'Korean concise noun phrase, ~관점 ending, 18-34 chars',
+                    'identity_label_format': 'Korean concise noun phrase, ~관점 ending, 18-34 chars',
                 },
             },
             mock_output_factory=lambda: {
@@ -840,7 +840,7 @@ class TaskRunner:
                     'Return strict JSON only.\n'
                     'display_name must be unique English codenames (e.g., Echo, Nova, Flux), '
                     'and must not be human names.\n'
-                    'identity_tagline must be Korean concise noun phrase ending with "관점", '
+                    'identity_label must be Korean concise noun phrase ending with "관점", '
                     'with natural wording and no broken sentence fragments.\n'
                     'identity_summary must be value-perspective text, not occupation text.\n'
                     'core_career_values across 3 personas must be clearly distinct.'
@@ -859,12 +859,16 @@ class TaskRunner:
 
         post_repair_reason = self._needs_persona_repair(raw_personas.personas)
         if post_repair_reason:
-            raw_personas = Phase1PersonasRawOutput.model_validate({'personas': self._mock_personas()})
+            repaired_locally = self._repair_personas_locally(
+                raw_personas.model_dump(mode='json')['personas']
+            )
+            raw_personas = Phase1PersonasRawOutput.model_validate({'personas': repaired_locally})
 
         normalized_personas = self._normalize_persona_taglines(
             raw_personas.model_dump(mode='json')['personas']
         )
-        raw_personas = Phase1PersonasRawOutput.model_validate({'personas': normalized_personas})
+        repaired_for_output = self._repair_personas_locally(normalized_personas)
+        raw_personas = Phase1PersonasRawOutput.model_validate({'personas': repaired_for_output})
         parsed = Phase1PersonasOutput.model_validate(raw_personas.model_dump(mode='json'))
         return parsed.model_dump(mode='json'), prompt_run.id, 'phase1_personas'
 
@@ -1364,7 +1368,11 @@ class TaskRunner:
                 'This is SINGLE-ASSISTANT planning (not persona-specific).\n'
                 'For each alternative, provide 3-6 concrete items.\n'
                 'Each item must include category/title/detail and be executable by a career-prep user.\n'
-                'Prefer specific channels/examples/resources over abstract wording.'
+                'Prefer specific channels/examples/resources over abstract wording.\n'
+                'Keep outputs concise:\n'
+                '- title: short phrase (about 12-28 chars)\n'
+                '- detail: 1-2 short Korean sentences, avoid very long parenthetical examples\n'
+                '- preserve 핵심 행동/산출물/맥락, but remove verbose instruction style phrasing.'
             ),
             input_json={'votes': compact_votes},
             mock_output_factory=lambda: self._mock_phase4_preparation(compact_votes),
@@ -1911,8 +1919,34 @@ class TaskRunner:
         if allow_llm_followup and candidate and len(candidate) >= 8:
             return candidate
 
-        missing_text = ', '.join([m for m in missing_aspects if m])[:120]
-        suffix = f' 특히 {missing_text}를 중심으로 알려주세요.' if missing_text else ''
+        def sanitize_missing_aspect(raw: str) -> str:
+            text = ' '.join(str(raw or '').split()).strip()
+            if not text:
+                return ''
+            if '답변이 너무 짧아' in text:
+                return ''
+            text = re.sub(r'\s*없음$', '', text).strip()
+            text = re.sub(r'\s*부족$', '', text).strip()
+            text = text.replace('구체적 설명 필요', '구체적 설명')
+            text = text.replace('구체화 필요', '구체화')
+            text = text.replace('맥락 필요', '맥락')
+            text = text.replace('필요', '').strip()
+            text = re.sub(r'[,:;]+$', '', text).strip()
+            return text
+
+        normalized_missing: list[str] = []
+        seen_missing: set[str] = set()
+        for missing in missing_aspects:
+            cleaned = sanitize_missing_aspect(missing)
+            if not cleaned:
+                continue
+            if cleaned in seen_missing:
+                continue
+            seen_missing.add(cleaned)
+            normalized_missing.append(cleaned)
+
+        missing_text = ', '.join(normalized_missing[:2])[:120]
+        suffix = f' 특히 {missing_text} 부분을 조금 더 구체적으로 알려주세요.' if missing_text else ''
         defaults = {
             'events': '좋아요. 그 사건이 실제로 어떤 상황에서 일어났는지 조금 더 구체적으로 알려주세요.',
             'significant_others': '좋아요. 누가 어떤 말/기대로 영향을 줬는지 한 번만 더 구체적으로 알려주세요.',
@@ -2519,6 +2553,8 @@ class TaskRunner:
                     title = f'{alt_title} 준비 실행 항목 {j}'
                 if not detail:
                     detail = '실행 기준과 산출물을 함께 적어 진행합니다.'
+                title = cls._phase4_compact_preparation_title(title)
+                detail = cls._phase4_compact_preparation_detail(detail)
                 normalized_items.append(
                     PreparationItem(
                         id=f'{alt_id}-{j}',
@@ -2537,6 +2573,8 @@ class TaskRunner:
                 for item in defaults:
                     if len(normalized_items) >= 3:
                         break
+                    item['title'] = cls._phase4_compact_preparation_title(str(item.get('title') or ''))
+                    item['detail'] = cls._phase4_compact_preparation_detail(str(item.get('detail') or ''))
                     normalized_items.append(item)
 
             normalized_alts.append(
@@ -2862,11 +2900,13 @@ class TaskRunner:
         for item in personas:
             if isinstance(item, dict):
                 name = str(item.get('display_name', '')).strip()
+                identity_label = str(item.get('identity_label', '')).strip()
                 identity_tagline = str(item.get('identity_tagline', '')).strip()
                 identity_summary = str(item.get('identity_summary', '')).strip()
                 core_values = str(item.get('core_career_values', '')).strip()
             else:
                 name = str(getattr(item, 'display_name', '')).strip()
+                identity_label = str(getattr(item, 'identity_label', '')).strip()
                 identity_tagline = str(getattr(item, 'identity_tagline', '')).strip()
                 identity_summary = str(getattr(item, 'identity_summary', '')).strip()
                 core_values = str(getattr(item, 'core_career_values', '')).strip()
@@ -2881,8 +2921,11 @@ class TaskRunner:
             seen.add(name)
             if TaskRunner._contains_occupation_terms(identity_summary):
                 return f'identity_summary contains occupation wording: {identity_summary}'
-            if identity_tagline and not TaskRunner._is_valid_identity_tagline(identity_tagline):
-                return f'identity_tagline is invalid: {identity_tagline}'
+            label = identity_label or identity_tagline
+            if not label:
+                return 'identity_label must not be empty'
+            if label and not TaskRunner._is_valid_identity_tagline(label):
+                return f'identity_label is invalid: {label}'
             primary_value = TaskRunner._extract_primary_value_key(core_values)
             if not primary_value:
                 return 'core_career_values must include explicit value wording'
@@ -2953,6 +2996,7 @@ class TaskRunner:
         label = ' '.join(str(raw_tagline or '').replace('…', ' ').replace('...', ' ').split()).strip()
         label = re.sub(r'[.]+$', '', label).strip()
         label = label.replace('본다 관점', '중시하는 관점').replace('함께 관점', '중시하는 관점')
+        label = label.replace('기반으 관점', '기반 관점')
         if label and not label.endswith('관점'):
             label = re.sub(r'(을|를)?\s*(중시한다|추구한다|지향한다|본다)$', '', label).strip()
             if label:
@@ -2960,65 +3004,317 @@ class TaskRunner:
         return label
 
     @staticmethod
-    def _build_identity_tagline_fallback(persona: dict[str, Any], idx: int) -> str:
-        merged = ' '.join(
-            [
-                str(persona.get('identity_summary', '') or ''),
-                str(persona.get('core_career_values', '') or ''),
-                str(persona.get('risk_challenge_orientation', '') or ''),
-                str(persona.get('information_processing_style', '') or ''),
-                str(persona.get('proactive_agency', '') or ''),
-            ]
-        )
-        text = ' '.join(merged.split())
-        categories: list[tuple[str, list[str]]] = [
-            ('절차적 정의 수호', ['공정', '절차', '정의', '원칙', '제도']),
-            ('고난도 분석 역량', ['분석', '논증', '근거', '데이터', '전문성', '난도']),
-            ('사회적 영향력 확대', ['영향', '기여', '공익', '사회', '변화']),
-            ('삶의 안정과 균형', ['안정', '균형', '지속', '조화', '리스크', '보수']),
-            ('지속적 성장과 성취', ['성장', '성취', '도전', '확장']),
-            ('자율적 방향 설계', ['자율', '주도', '실행', '선택']),
+    def _normalize_identity_summary(raw_summary: str) -> str:
+        return ' '.join(str(raw_summary or '').replace('…', ' ').replace('...', ' ').split()).strip()
+
+    @staticmethod
+    def _identity_tagline_categories() -> list[tuple[str, list[str], str]]:
+        return [
+            (
+                '절차공정',
+                ['공정', '절차', '정의', '원칙', '제도', '신뢰'],
+                '절차적 정의와 공정한 기준을 지키는 관점',
+            ),
+            (
+                '분석논증',
+                ['분석', '논증', '근거', '데이터', '정보 수집', '비교', '검증', '전문성'],
+                '근거와 논증으로 복잡한 문제를 푸는 관점',
+            ),
+            (
+                '생활안정',
+                ['가정', '생활', '안정', '예측', '불확실성', '지속', '보상', '리스크'],
+                '삶의 안정과 지속가능한 균형을 중시하는 관점',
+            ),
+            (
+                '완성도실용',
+                ['완성도', '기능', '실용', '심미', '디자인', '시각', '결과물', '마감', '요구사항'],
+                '심미성과 실용성을 함께 갖춘 완성도를 추구하는 관점',
+            ),
+            (
+                '사회기여',
+                ['공익', '사회', '기여', '영향', '변화'],
+                '사회에 의미 있는 기여를 실질적 성과로 연결하는 관점',
+            ),
+            (
+                '성장도전',
+                ['성장', '성취', '도전', '확장', '학습'],
+                '지속적 성장과 성취를 통해 가능성을 확장하는 관점',
+            ),
+            (
+                '자율주도',
+                ['자율', '주도', '실행', '선택', '설계'],
+                '자율적 선택과 주도적 실행을 중시하는 관점',
+            ),
         ]
-        scored: list[tuple[str, int]] = []
-        for label, keywords in categories:
-            score = sum(1 for keyword in keywords if keyword in text)
-            if score > 0:
-                scored.append((label, score))
-        scored.sort(key=lambda item: item[1], reverse=True)
 
-        defaults = ['절차적 정의 수호', '고난도 분석 역량', '삶의 안정과 균형']
-        axis1 = scored[0][0] if scored else defaults[idx % len(defaults)]
-        axis2 = ''
-        for label, _score in scored[1:]:
-            if label != axis1:
-                axis2 = label
-                break
-        if not axis2:
-            for candidate in ['사회적 영향력 확대', '지속적 성장과 성취', '삶의 안정과 균형', '자율적 방향 설계']:
-                if candidate != axis1:
-                    axis2 = candidate
-                    break
+    @staticmethod
+    def _build_identity_tagline_fallback(persona: dict[str, Any], idx: int) -> str:
+        weighted_sources: list[tuple[str, int]] = [
+            (str(persona.get('core_career_values', '') or ''), 4),
+            (str(persona.get('identity_summary', '') or ''), 3),
+            (str(persona.get('information_processing_style', '') or ''), 2),
+            (str(persona.get('risk_challenge_orientation', '') or ''), 2),
+            (str(persona.get('proactive_agency', '') or ''), 1),
+        ]
+        categories = TaskRunner._identity_tagline_categories()
 
-        tagline = f'{axis1}와 {axis2}를 중시하는 관점'
-        if len(tagline) > 52:
-            tagline = f'{axis1}·{axis2} 관점'
-        return tagline
+        scores: dict[str, int] = {key: 0 for key, _, _ in categories}
+        for text, weight in weighted_sources:
+            normalized_text = ' '.join(str(text or '').split())
+            if not normalized_text:
+                continue
+            for key, keywords, _template in categories:
+                hit_count = sum(normalized_text.count(keyword) for keyword in keywords if keyword in normalized_text)
+                if hit_count > 0:
+                    scores[key] += hit_count * weight
+
+        defaults = ['절차공정', '분석논증', '생활안정']
+        best_key = max(scores.items(), key=lambda item: item[1])[0]
+        if scores.get(best_key, 0) <= 0:
+            best_key = defaults[idx % len(defaults)]
+
+        template_map = {key: template for key, _keywords, template in categories}
+        return template_map.get(best_key, '핵심 가치와 우선순위를 반영하는 관점')
+
+    def _build_identity_tagline_from_summary(self, persona: dict[str, Any], idx: int) -> str:
+        summary = self._normalize_identity_summary(str(persona.get('identity_summary', '') or ''))
+        if not summary:
+            return self._build_identity_tagline_fallback(persona, idx)
+        categories = self._identity_tagline_categories()
+        summary_scores: dict[str, int] = {key: 0 for key, _, _ in categories}
+        for key, keywords, _template in categories:
+            hit_count = sum(summary.count(keyword) for keyword in keywords if keyword in summary)
+            if hit_count > 0:
+                summary_scores[key] += hit_count
+        if summary_scores:
+            best_key = max(summary_scores.items(), key=lambda item: item[1])[0]
+            if summary_scores.get(best_key, 0) > 0:
+                template_map = {key: template for key, _keywords, template in categories}
+                mapped = self._normalize_identity_tagline(
+                    template_map.get(best_key, self._build_identity_tagline_fallback(persona, idx))
+                )
+                if self._is_valid_identity_tagline(mapped):
+                    return mapped
+
+        first_clause = re.split(r'[.\n!?;]+', summary)[0].strip()
+        first_clause = re.sub(r'^(핵심\s*가치|핵심\s*진로\s*가치|정체성)\s*[:：-]?\s*', '', first_clause)
+        first_clause = re.sub(r'\s*(관점(이다)?|시각)$', '', first_clause).strip()
+        if first_clause:
+            direct = self._normalize_identity_tagline(first_clause)
+            if self._is_valid_identity_tagline(direct):
+                return direct
+        return self._build_identity_tagline_fallback(persona, idx)
 
     def _normalize_persona_taglines(self, personas: list[dict[str, Any]]) -> list[dict[str, Any]]:
         normalized: list[dict[str, Any]] = []
         seen: set[str] = set()
         for idx, item in enumerate(personas):
             persona = dict(item)
-            raw_tagline = str(persona.get('identity_tagline', '') or '')
-            tagline = self._normalize_identity_tagline(raw_tagline)
+            persona['identity_summary'] = self._normalize_identity_summary(
+                str(persona.get('identity_summary', '') or '')
+            )
+            raw_label = self._normalize_identity_tagline(
+                str(persona.get('identity_label') or persona.get('identity_tagline') or '')
+            )
+            summary_tagline = self._build_identity_tagline_from_summary(persona, idx)
+            fallback_tagline = self._build_identity_tagline_fallback(persona, idx)
+
+            candidates = [raw_label, summary_tagline, fallback_tagline]
+            tagline = ''
+            for candidate in candidates:
+                candidate = self._normalize_identity_tagline(candidate)
+                if not self._is_valid_identity_tagline(candidate):
+                    continue
+                if candidate in seen:
+                    continue
+                tagline = candidate
+                break
+            if not tagline:
+                tagline = self._normalize_identity_tagline(summary_tagline or fallback_tagline)
             if not self._is_valid_identity_tagline(tagline):
-                tagline = self._build_identity_tagline_fallback(persona, idx)
+                tagline = '핵심 가치 우선순위를 반영하는 관점'
             if tagline in seen:
-                tagline = f'{tagline} ({str(persona.get("persona_id", "")).upper()})'
+                axis = self._extract_primary_value_key(str(persona.get('core_career_values') or ''))
+                axis = axis or '핵심 가치'
+                tagline = self._normalize_identity_tagline(
+                    f'{axis}를 반영한 {str(persona.get("persona_id", "")).upper()} 관점'
+                )
+                if not self._is_valid_identity_tagline(tagline):
+                    tagline = '핵심 가치와 우선순위를 반영하는 관점'
             seen.add(tagline)
+            persona['identity_label'] = tagline
             persona['identity_tagline'] = tagline
             normalized.append(persona)
         return normalized
+
+    @staticmethod
+    def _sanitize_codename(raw_name: str) -> str:
+        name = re.sub(r'[^A-Za-z0-9]', '', str(raw_name or '').strip())
+        if not name:
+            return ''
+        if name[0].isdigit():
+            name = f'A{name}'
+        name = name[0].upper() + name[1:]
+        if len(name) > 15:
+            name = name[:15]
+        if not re.fullmatch(r'[A-Z][A-Za-z0-9]{2,14}', name):
+            return ''
+        return name
+
+    def _repair_personas_locally(self, personas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        by_id: dict[str, dict[str, Any]] = {}
+        for row in personas:
+            if not isinstance(row, dict):
+                continue
+            pid = str(row.get('persona_id') or '').strip()
+            if pid in {'p1', 'p2', 'p3'} and pid not in by_id:
+                by_id[pid] = dict(row)
+
+        codename_pool = [
+            'Aegis',
+            'Vector',
+            'Equinox',
+            'Nexus',
+            'Quasar',
+            'Orbit',
+            'Helix',
+            'Axiom',
+            'Pulse',
+        ]
+        fallback_core_values = ['절차·공정성', '분석·전문성', '안정·균형']
+
+        used_names: set[str] = set()
+        used_taglines: set[str] = set()
+        repaired: list[dict[str, Any]] = []
+
+        for idx, persona_id in enumerate(['p1', 'p2', 'p3']):
+            src = by_id.get(persona_id, {})
+            core_values = str(src.get('core_career_values') or '').strip() or fallback_core_values[idx]
+            risk = str(src.get('risk_challenge_orientation') or '').strip() or '계산된 도전을 선호'
+            info_style = (
+                str(src.get('information_processing_style') or '').strip() or '근거를 확인하며 판단'
+            )
+            proactive = str(src.get('proactive_agency') or '').strip() or '스스로 계획을 세워 실행'
+            summary = self._normalize_identity_summary(str(src.get('identity_summary') or ''))
+            if not summary or self._contains_occupation_terms(summary):
+                summary = f'{core_values}를 우선하며 현실 조건 속에서 지속 가능한 선택을 설계하는 관점'
+
+            name = self._sanitize_codename(str(src.get('display_name') or ''))
+            if not name or name in used_names:
+                name = ''
+                for candidate in codename_pool:
+                    if candidate not in used_names:
+                        name = candidate
+                        break
+            if not name:
+                name = f'Agent{idx + 1}'
+            used_names.add(name)
+
+            persona_seed = {
+                'persona_id': persona_id,
+                'display_name': name,
+                'identity_summary': summary,
+                'core_career_values': core_values,
+                'risk_challenge_orientation': risk,
+                'information_processing_style': info_style,
+                'proactive_agency': proactive,
+            }
+            raw_tagline = self._normalize_identity_tagline(
+                str(src.get('identity_label') or src.get('identity_tagline') or '')
+            )
+            tagline = raw_tagline if self._is_valid_identity_tagline(raw_tagline) else ''
+            if not tagline:
+                tagline = self._build_identity_tagline_from_summary(persona_seed, idx)
+            if not self._is_valid_identity_tagline(tagline):
+                tagline = self._build_identity_tagline_fallback(persona_seed, idx)
+            tagline = self._normalize_identity_tagline(tagline)
+            if not self._is_valid_identity_tagline(tagline):
+                tagline = '핵심 가치와 우선순위를 반영하는 관점'
+            if tagline in used_taglines:
+                axis = self._extract_primary_value_key(core_values) or f'핵심 가치 {idx + 1}'
+                alt_tagline = self._normalize_identity_tagline(f'{axis}를 중시하는 관점')
+                if self._is_valid_identity_tagline(alt_tagline) and alt_tagline not in used_taglines:
+                    tagline = alt_tagline
+                else:
+                    tagline = self._normalize_identity_tagline(
+                        f'{axis} 우선순위를 반영한 {persona_id.upper()} 관점'
+                    )
+                    if not self._is_valid_identity_tagline(tagline):
+                        tagline = f'핵심 가치 우선순위를 반영하는 {persona_id.upper()} 관점'
+            used_taglines.add(tagline)
+
+            repaired.append(
+                {
+                    'persona_id': persona_id,
+                    'display_name': name,
+                    'identity_label': tagline,
+                    'identity_tagline': tagline,
+                    'identity_summary': summary,
+                    'core_career_values': core_values,
+                    'risk_challenge_orientation': risk,
+                    'information_processing_style': info_style,
+                    'proactive_agency': proactive,
+                }
+            )
+
+        return repaired
+
+    @staticmethod
+    def _phase4_compact_preparation_title(title: str) -> str:
+        text = re.sub(r'\s+', ' ', str(title or '')).strip()
+        text = re.sub(r'^(실행|준비)\s*[-:：]\s*', '', text)
+        text = re.sub(r'\([^)]{18,}\)', '', text).strip()
+        if len(text) > 40:
+            chunks = [c.strip() for c in re.split(r'[,:/|]', text) if c.strip()]
+            if chunks:
+                candidate = chunks[0]
+                if len(candidate) >= 8:
+                    text = candidate
+        return text or '준비 실행 항목'
+
+    @staticmethod
+    def _phase4_compact_preparation_detail(detail: str) -> str:
+        text = re.sub(r'\s+', ' ', str(detail or '')).strip()
+        if not text:
+            return '실행 기준과 산출물을 함께 적어 진행함'
+
+        # Keep key signals but compress overly long procedural narration.
+        text = re.sub(r'\([^)]{60,}\)', '', text).strip()
+        text = re.sub(r'(하세요|하십시오)\.?$', '', text).strip()
+        text = re.sub(r'합니다\.?$', '함', text).strip()
+        text = re.sub(r'됩니다\.?$', '됨', text).strip()
+
+        clauses = [
+            c.strip()
+            for c in re.split(r'(?<=[.!?])\s+|(?:\s*;\s*)|(?:\s+그리고\s+)', text)
+            if c.strip()
+        ]
+        if not clauses:
+            return text[:140].strip()
+
+        compact: list[str] = []
+        for clause in clauses:
+            candidate = re.sub(r'^[\-•]\s*', '', clause).strip()
+            if not candidate:
+                continue
+            projected = ' '.join(compact + [candidate]).strip()
+            if len(projected) > 150:
+                break
+            compact.append(candidate)
+            if len(compact) >= 2:
+                break
+
+        merged = ' '.join(compact).strip() if compact else text
+        if len(merged) > 170:
+            segments = [s.strip() for s in re.split(r'\s*,\s*', merged) if s.strip()]
+            reduced: list[str] = []
+            for seg in segments:
+                projected = ', '.join(reduced + [seg])
+                if len(projected) > 160:
+                    break
+                reduced.append(seg)
+            merged = ', '.join(reduced) if reduced else merged[:160].strip()
+        return merged.rstrip('.')
 
     @staticmethod
     def _mock_personas() -> list[dict[str, Any]]:
@@ -3026,8 +3322,9 @@ class TaskRunner:
             PersonaProfile(
                 persona_id='p1',
                 display_name='Echo',
+                identity_label='절차적 정의 수호와 제도 신뢰 회복을 중시하는 관점',
                 identity_tagline='절차적 정의 수호와 제도 신뢰 회복을 중시하는 관점',
-                identity_summary='자율성과 의미를 가장 우선해 스스로 방향을 설계하는 관점',
+                identity_summary='사회적 권력이 개입되는 의사결정에서 절차적 정의와 공정성을 최우선으로 두고, 제도 신뢰 회복을 중시하는 관점',
                 core_career_values='자율성, 의미, 자기표현',
                 risk_challenge_orientation='실험적 도전을 선호',
                 information_processing_style='직관과 빠른 검증',
@@ -3036,8 +3333,9 @@ class TaskRunner:
             PersonaProfile(
                 persona_id='p2',
                 display_name='Nova',
+                identity_label='고난도 분석 역량을 축적해 사회적 영향력으로 연결하는 관점',
                 identity_tagline='고난도 분석 역량을 축적해 사회적 영향력으로 연결하는 관점',
-                identity_summary='안정성과 지속가능성을 우선해 리스크를 관리하는 관점',
+                identity_summary='복잡한 사회 갈등과 고난도 문제를 끝까지 추적·분석해 구조적으로 정리하고, 논증으로 설득력 있는 결론을 만드는 관점',
                 core_career_values='안정성, 예측가능성, 지속성',
                 risk_challenge_orientation='계산된 도전을 선호',
                 information_processing_style='데이터 기반 분석',
@@ -3046,8 +3344,9 @@ class TaskRunner:
             PersonaProfile(
                 persona_id='p3',
                 display_name='Pulse',
+                identity_label='의미 있는 공익 기여와 삶의 지속가능한 안정을 추구하는 관점',
                 identity_tagline='의미 있는 공익 기여와 삶의 지속가능한 안정을 추구하는 관점',
-                identity_summary='성장과 성취를 우선해 빠른 학습과 도전을 추구하는 관점',
+                identity_summary='공익에 기여하는 의미와 개인 삶의 안정·지속가능성을 함께 지키며, 이상과 현실의 균형을 추구하는 관점',
                 core_career_values='성장, 성취, 도전',
                 risk_challenge_orientation='관계 기반 안전장치 확보 후 도전',
                 information_processing_style='대화와 피드백 중심',

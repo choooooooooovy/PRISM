@@ -1,11 +1,13 @@
 'use client';
 
+import { useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { getStepByPath } from '@/lib/flowSteps';
 
 interface FooterStepNavProps {
   className?: string;
   nextDisabled?: boolean;
+  isLoading?: boolean;
   hidePreviousIfFirst?: boolean;
   nextLabel?: string;
   onBeforeNext?: () => Promise<boolean | void> | boolean | void;
@@ -15,6 +17,7 @@ interface FooterStepNavProps {
 export function FooterStepNav({
   className,
   nextDisabled = false,
+  isLoading = false,
   hidePreviousIfFirst = true,
   nextLabel,
   onBeforeNext,
@@ -22,11 +25,13 @@ export function FooterStepNav({
 }: FooterStepNavProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const [isProcessingNext, setIsProcessingNext] = useState(false);
   const { previous, next, isFirst, isLast } = getStepByPath(pathname);
 
   const showPrevious = !(hidePreviousIfFirst && isFirst);
   const resolvedNextLabel = nextLabel ?? (isLast ? '리포트 보기' : '다음 단계');
-  const canGoNext = isLast || (Boolean(next) && !nextDisabled);
+  const nextLoading = isLoading || isProcessingNext;
+  const canGoNext = !nextLoading && (isLast || (Boolean(next) && !nextDisabled));
 
   const handlePrevious = async () => {
     if (!previous) return;
@@ -36,14 +41,20 @@ export function FooterStepNav({
 
   const handleNext = async () => {
     if (!next && !isLast) return;
-    const ok = (await onBeforeNext?.()) ?? true;
-    if (!ok) return;
-    if (next) {
-      router.push(next.path);
-      return;
-    }
-    if (isLast) {
-      router.push('/report');
+    if (nextLoading) return;
+    setIsProcessingNext(true);
+    try {
+      const ok = (await onBeforeNext?.()) ?? true;
+      if (!ok) return;
+      if (next) {
+        router.push(next.path);
+        return;
+      }
+      if (isLast) {
+        router.push('/report');
+      }
+    } finally {
+      setIsProcessingNext(false);
     }
   };
 
@@ -72,15 +83,38 @@ export function FooterStepNav({
       <button
         type="button"
         onClick={handleNext}
-        className="px-6 py-3 rounded-lg text-[14px]"
+        className="px-6 py-3 rounded-lg text-[14px] inline-flex items-center justify-center gap-2"
         style={{
-          backgroundColor: canGoNext ? 'var(--color-accent)' : 'var(--color-bg-surface)',
-          color: canGoNext ? '#fff' : 'var(--color-text-secondary)',
-          border: canGoNext ? 'none' : '1px solid var(--color-border)',
+          backgroundColor: nextLoading
+            ? 'var(--color-bg-surface)'
+            : canGoNext
+              ? 'var(--color-accent)'
+              : 'var(--color-bg-surface)',
+          color: nextLoading
+            ? 'var(--color-text-primary)'
+            : canGoNext
+              ? '#fff'
+              : 'var(--color-text-secondary)',
+          border: nextLoading
+            ? '1px solid rgba(255,31,86,0.42)'
+            : canGoNext
+              ? 'none'
+              : '1px solid var(--color-border)',
           cursor: canGoNext ? 'pointer' : 'not-allowed',
         }}
         disabled={!canGoNext}
       >
+        {nextLoading && (
+          <span
+            className="inline-block w-3.5 h-3.5 rounded-full animate-spin"
+            style={{
+              border: '2px solid rgba(255,31,86,0.22)',
+              borderTopColor: 'var(--color-accent)',
+              borderRightColor: 'var(--color-accent)',
+            }}
+            aria-hidden
+          />
+        )}
         {resolvedNextLabel}
       </button>
     </div>

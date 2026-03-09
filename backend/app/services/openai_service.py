@@ -24,8 +24,10 @@ class OpenAIService:
         )
 
     async def create_embedding(self, text: str) -> list[float]:
-        if self.settings.llm_mock_mode or not self.settings.openai_api_key:
+        if self.settings.llm_mock_mode:
             return [0.0] * self.settings.embedding_dimensions
+        if not self.settings.openai_api_key:
+            raise RuntimeError('OPENAI_API_KEY is required when LLM_MOCK_MODE=false')
 
         response = await self.client.embeddings.create(
             model=self.settings.openai_embedding_model,
@@ -63,9 +65,11 @@ class OpenAIService:
             error: str | None = None
 
             try:
-                if self.settings.llm_mock_mode or not self.settings.openai_api_key:
+                if self.settings.llm_mock_mode:
                     output_json = mock_output_factory()
                 else:
+                    if not self.settings.openai_api_key:
+                        raise RuntimeError('OPENAI_API_KEY is required when LLM_MOCK_MODE=false')
                     client = self.client.with_options(timeout=timeout_sec) if timeout_sec else self.client
                     response = await client.responses.create(
                         model=model_name,

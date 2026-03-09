@@ -39,6 +39,7 @@ interface Phase1Structured {
 interface PersonaProfile {
   persona_id: 'p1' | 'p2' | 'p3';
   display_name: string;
+  identity_label?: string;
   identity_summary: string;
   core_career_values: string;
   risk_challenge_orientation: string;

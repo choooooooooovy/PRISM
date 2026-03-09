@@ -88,6 +88,7 @@ export default function Phase3_2Prioritization() {
           getLatestArtifact<{
             personas?: Array<{
               persona_id: string;
+              identity_label?: string;
               identity_tagline?: string;
               identity_summary?: string;
               core_career_values?: string;
@@ -296,7 +297,8 @@ export default function Phase3_2Prioritization() {
                                     color: 'var(--color-text-secondary)',
                                     lineHeight: 1.5,
                                     whiteSpace: 'normal',
-                                    wordBreak: 'keep-all',
+                                    wordBreak: 'break-word',
+                                    overflowWrap: 'anywhere',
                                   }}
                                 >
                                   {personaTaglineById[choice.persona_id]}

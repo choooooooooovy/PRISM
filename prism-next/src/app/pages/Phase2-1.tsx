@@ -37,6 +37,46 @@ function clampStyle(lines: number): React.CSSProperties {
   } as React.CSSProperties;
 }
 
+function buildBulletLines(text: string, maxItems = 3): string[] {
+  const normalized = String(text || '')
+    .replace(/…|\.\.\./g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return [];
+
+  const sentenceEndPattern = /(다|요|임|됨|함|다요|니다|합니다|있다|없다)$/;
+
+  const sentenceParts = normalized
+    .split(/[.\n;]+/g)
+    .map(v => v.trim())
+    .filter(Boolean)
+    .filter(v => v.length >= 8 && sentenceEndPattern.test(v));
+
+  let parts = sentenceParts;
+
+  // If sentence boundaries are missing, keep as one complete line rather than comma-fragment bullets.
+  if (parts.length === 0) {
+    const safe = normalized
+      .replace(/,\s*/g, ', ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return [safe];
+  }
+
+  const deduped: string[] = [];
+  const seen = new Set<string>();
+  for (const part of parts) {
+    const key = part.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(part);
+    if (deduped.length >= maxItems) break;
+  }
+
+  if (deduped.length > 0) return deduped;
+  return [normalized];
+}
+
 export default function Phase2_1PersonaExploration() {
   const [explored, setExplored] = React.useState(false);
   const [isGenerating, setIsGenerating] = React.useState(false);
@@ -101,6 +141,7 @@ export default function Phase2_1PersonaExploration() {
           getLatestArtifact<{
             personas?: Array<{
               persona_id: string;
+              identity_label?: string;
               identity_tagline?: string;
               identity_summary?: string;
               core_career_values?: string;
@@ -346,7 +387,8 @@ export default function Phase2_1PersonaExploration() {
                             color: 'var(--color-text-secondary)',
                             lineHeight: 1.7,
                             whiteSpace: 'normal',
-                            wordBreak: 'keep-all',
+                            wordBreak: 'break-word',
+                            overflowWrap: 'anywhere',
                           }}
                         >
                           {personaTaglineById[board.id] || board.tagline}
@@ -398,9 +440,21 @@ export default function Phase2_1PersonaExploration() {
                                 >
                                   하는 일
                                 </span>
-                                <span style={{ color: 'var(--color-text-secondary)', ...clampStyle(5) }}>
-                                  {job.tasks}
-                                </span>
+                                <ul className="mt-1 space-y-1.5">
+                                  {buildBulletLines(job.tasks).map((line, idx) => (
+                                    <li
+                                      key={`${job.id}-tasks-${idx}`}
+                                      className="text-[13px]"
+                                      style={{
+                                        color: 'var(--color-text-secondary)',
+                                        lineHeight: 1.65,
+                                        paddingLeft: '0.1rem',
+                                      }}
+                                    >
+                                      • {line}
+                                    </li>
+                                  ))}
+                                </ul>
                               </div>
                               <div style={{ minHeight: '7.7rem' }}>
                                 <span
@@ -408,9 +462,21 @@ export default function Phase2_1PersonaExploration() {
                                 >
                                   근무 환경
                                 </span>
-                                <span style={{ color: 'var(--color-text-secondary)', ...clampStyle(4) }}>
-                                  {job.environment}
-                                </span>
+                                <ul className="mt-1 space-y-1.5">
+                                  {buildBulletLines(job.environment).map((line, idx) => (
+                                    <li
+                                      key={`${job.id}-env-${idx}`}
+                                      className="text-[13px]"
+                                      style={{
+                                        color: 'var(--color-text-secondary)',
+                                        lineHeight: 1.65,
+                                        paddingLeft: '0.1rem',
+                                      }}
+                                    >
+                                      • {line}
+                                    </li>
+                                  ))}
+                                </ul>
                               </div>
                               <div style={{ minHeight: '7.7rem' }}>
                                 <span
@@ -418,9 +484,21 @@ export default function Phase2_1PersonaExploration() {
                                 >
                                   전망
                                 </span>
-                                <span style={{ color: 'var(--color-text-secondary)', ...clampStyle(4) }}>
-                                  {job.outlook}
-                                </span>
+                                <ul className="mt-1 space-y-1.5">
+                                  {buildBulletLines(job.outlook).map((line, idx) => (
+                                    <li
+                                      key={`${job.id}-outlook-${idx}`}
+                                      className="text-[13px]"
+                                      style={{
+                                        color: 'var(--color-text-secondary)',
+                                        lineHeight: 1.65,
+                                        paddingLeft: '0.1rem',
+                                      }}
+                                    >
+                                      • {line}
+                                    </li>
+                                  ))}
+                                </ul>
                               </div>
                             </div>
                           </div>
