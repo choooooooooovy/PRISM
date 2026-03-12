@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     )
 
     openai_api_key: str = Field(default='', alias='OPENAI_API_KEY')
-    openai_model: str = Field(default='gpt-4o', alias='OPENAI_MODEL')
+    openai_model: str = Field(default='gpt-5.1', alias='OPENAI_MODEL')
     openai_embedding_model: str = Field(
         default='text-embedding-3-small', alias='OPENAI_EMBEDDING_MODEL'
     )

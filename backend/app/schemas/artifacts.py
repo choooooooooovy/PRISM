@@ -31,6 +31,11 @@ class Phase1SlotSufficiencyOutput(APIModel):
     confidence: float = Field(ge=0.0, le=1.0)
 
 
+class Phase1ConversationalTurnOutput(APIModel):
+    ack_sentence: str
+    next_question: str
+
+
 class MetacognitionSummary(APIModel):
     self_talk: str
     self_awareness: str

@@ -16,6 +16,7 @@ from app.core.config import get_settings
 from app.db.session import AsyncSessionLocal
 from app.schemas.ai import AiRunRequest
 from app.schemas.artifacts import (
+    Phase1ConversationalTurnOutput,
     AlternativeDraft,
     AlternativePreparation,
     AlternativeVotes,
@@ -318,6 +319,7 @@ class TaskRunner:
             )
 
         latest_messages = await self._get_latest_messages(db, request.session_id, phase='phase1', step='1-1')
+        previous_assistant = self._phase1_latest_assistant_text(latest_messages)
         current_structured = await get_latest_artifact_by_type(db, request.session_id, 'phase1_structured')
         existing_structured = self._phase1_normalize_structured(
             current_structured.payload if current_structured else {}
@@ -360,6 +362,7 @@ class TaskRunner:
         assistant_message = ''
         suggested_fields: list[str] = []
         state_current_slot = current_slot
+        transition_ack = ''
 
         def next_unasked() -> str:
             for k in slot_keys:
@@ -477,17 +480,24 @@ class TaskRunner:
                     'Update structured_snapshot with explicit facts from latest_user_message.\n'
                     'Use slot_guidance for the current slot.\n'
                     'If latest_user_message does not support a field, keep it unchanged from existing_structured.\n'
-                    'Never hallucinate or generalize beyond user words.'
+                    'Never hallucinate or generalize beyond user words.\n'
+                    'assistant_message must be exactly one short Korean acknowledgment sentence only.\n'
+                    'Do not ask follow-up questions in assistant_message.\n'
+                    'assistant_message should paraphrase one concrete point from latest_user_message.\n'
+                    'Do not copy long user phrases verbatim.\n'
+                    'Avoid generic process words such as "정리", "구조화", "반영".\n'
+                    'Do not use slot meta terms such as "사건 내용", "주요 타인 내용", "항목".'
                 ),
                 input_json=extract_payload,
                 mock_output_factory=lambda: {
-                    'assistant_message': '',
+                    'assistant_message': '말씀해주신 내용 잘 이해했어요.',
                     'suggested_fields': [current_slot],
                     'structured_snapshot': existing_structured,
                 },
                 model_override=request.model_override,
             )
             prompt_run = extract_prompt_run
+            transition_ack = str(parsed.assistant_message or '').strip()
 
             merged_candidate = self._merge_phase1_structured(
                 existing_structured,
@@ -572,10 +582,28 @@ class TaskRunner:
                     asked_slots.append(current_slot)
                 nxt = next_unasked()
                 if nxt:
-                    assistant_message = self.PHASE1_QUESTION_TEMPLATES.get(
-                        nxt,
-                        '좋아요. 다음 항목을 이야기해볼까요?',
+                    fallback_message = self._phase1_build_transition_to_next_question(
+                        current_slot=current_slot,
+                        user_message=user_message,
+                        next_slot=nxt,
+                        include_topic=True,
+                        llm_ack=transition_ack,
                     )
+                    assistant_message, convo_prompt_run = await self._phase1_generate_conversation_turn_message(
+                        db=db,
+                        request=request,
+                        run_id=run_id,
+                        mode='transition',
+                        current_slot=current_slot,
+                        next_slot=nxt,
+                        user_message=user_message,
+                        previous_assistant=previous_assistant,
+                        fallback_message=fallback_message,
+                        llm_ack=transition_ack,
+                        missing_aspects=[],
+                    )
+                    if convo_prompt_run is not None:
+                        prompt_run = convo_prompt_run
                     suggested_fields = [nxt]
                     state_current_slot = nxt
                 else:
@@ -589,10 +617,28 @@ class TaskRunner:
                         asked_slots.append(current_slot)
                     nxt = next_unasked()
                     if nxt:
-                        assistant_message = self.PHASE1_QUESTION_TEMPLATES.get(
-                            nxt,
-                            '다음 항목을 이야기해볼까요?',
+                        fallback_message = self._phase1_build_transition_to_next_question(
+                            current_slot=current_slot,
+                            user_message=user_message,
+                            next_slot=nxt,
+                            include_topic=False,
+                            llm_ack=transition_ack,
                         )
+                        assistant_message, convo_prompt_run = await self._phase1_generate_conversation_turn_message(
+                            db=db,
+                            request=request,
+                            run_id=run_id,
+                            mode='transition',
+                            current_slot=current_slot,
+                            next_slot=nxt,
+                            user_message=user_message,
+                            previous_assistant=previous_assistant,
+                            fallback_message=fallback_message,
+                            llm_ack=transition_ack,
+                            missing_aspects=[],
+                        )
+                        if convo_prompt_run is not None:
+                            prompt_run = convo_prompt_run
                         suggested_fields = [nxt]
                         state_current_slot = nxt
                     else:
@@ -600,12 +646,27 @@ class TaskRunner:
                         suggested_fields = []
                         state_current_slot = ''
                 else:
-                    assistant_message = self._phase1_build_slot_followup_question(
+                    fallback_message = self._phase1_build_slot_followup_question(
                         slot_key=current_slot,
                         llm_followup=followup_question,
                         missing_aspects=missing_aspects,
                         allow_llm_followup=(current_slot not in self.PHASE1_CORE_SLOTS),
                     )
+                    assistant_message, convo_prompt_run = await self._phase1_generate_conversation_turn_message(
+                        db=db,
+                        request=request,
+                        run_id=run_id,
+                        mode='followup',
+                        current_slot=current_slot,
+                        next_slot=current_slot,
+                        user_message=user_message,
+                        previous_assistant=previous_assistant,
+                        fallback_message=fallback_message,
+                        llm_ack=transition_ack,
+                        missing_aspects=missing_aspects,
+                    )
+                    if convo_prompt_run is not None:
+                        prompt_run = convo_prompt_run
                     suggested_fields = [current_slot]
                     state_current_slot = current_slot
         else:
@@ -630,12 +691,6 @@ class TaskRunner:
                 suggested_fields = []
                 state_current_slot = ''
 
-        previous_assistant = ''
-        for msg in reversed(latest_messages):
-            if str(msg.get('role', '')).strip() == 'assistant':
-                previous_assistant = str(msg.get('content', '')).strip()
-                if previous_assistant:
-                    break
         if (
             current_slot
             and state_current_slot == current_slot
@@ -646,9 +701,12 @@ class TaskRunner:
                 asked_slots.append(current_slot)
             nxt = next_unasked()
             if nxt:
-                assistant_message = self.PHASE1_QUESTION_TEMPLATES.get(
-                    nxt,
-                    '다음 항목을 이야기해볼까요?',
+                assistant_message = self._phase1_build_transition_to_next_question(
+                    current_slot=current_slot,
+                    user_message=user_message,
+                    next_slot=nxt,
+                    include_topic=False,
+                    llm_ack='',
                 )
                 suggested_fields = [nxt]
                 state_current_slot = nxt
@@ -1782,6 +1840,274 @@ class TaskRunner:
             if key == slot_key:
                 return focus
         return ''
+
+    @classmethod
+    def _phase1_slot_label(cls, slot_key: str) -> str:
+        for key, label, _ in cls.PHASE1_TARGET_PLAN:
+            if key == slot_key:
+                return label
+        return ''
+
+    @staticmethod
+    def _phase1_extract_transition_topic(user_message: str, max_len: int = 28) -> str:
+        text = ' '.join(str(user_message or '').split()).strip()
+        if not text:
+            return ''
+        text = re.sub(r'[\"“”\'`]', '', text).strip()
+        first_clause = re.split(r'[.!?\n]+', text)[0].strip()
+        if len(first_clause) > max_len:
+            first_clause = first_clause[:max_len].rstrip()
+        first_clause = re.sub(r'[,:;]+$', '', first_clause).strip()
+        if len(first_clause) < 4:
+            return ''
+        return first_clause
+
+    @classmethod
+    def _phase1_compact_question(cls, slot_key: str) -> str:
+        raw = ' '.join(cls.PHASE1_QUESTION_TEMPLATES.get(slot_key, '다음 항목을 이야기해볼까요?').split()).strip()
+        if not raw:
+            return '다음 항목을 이야기해볼까요?'
+        # Keep conversational question body only.
+        raw = raw.split(' 예:')[0].strip()
+        raw = raw.split(' 직업명이 아니어도 괜찮습니다.')[0].strip()
+        return raw
+
+    @staticmethod
+    def _phase1_is_generic_ack(text: str) -> bool:
+        v = ' '.join(str(text or '').split()).strip()
+        if not v:
+            return True
+        generic_patterns = [
+            '잘 정리',
+            '구조화',
+            '반영해',
+            '반영해두',
+            '공유해',
+            '기록해',
+            '내용을 잘',
+            '잘 들었',
+        ]
+        return any(pattern in v for pattern in generic_patterns)
+
+    @staticmethod
+    def _phase1_ack_anchor_tokens(user_message: str) -> list[str]:
+        text = ' '.join(str(user_message or '').split()).strip()
+        if not text:
+            return []
+        tokens = re.findall(r'[가-힣A-Za-z0-9]+', text)
+        stopwords = {
+            '그리고', '그래서', '하지만', '그런데', '정도', '부분', '지금', '앞으로', '최근', '정말',
+            '진로', '결정', '선택', '고민', '생각', '느낌', '느꼈다', '했다', '있다', '없다',
+        }
+        anchors: list[str] = []
+        particles = ['으로', '에서', '에게', '께서', '까지', '부터', '처럼', '보다', '과', '와', '은', '는', '이', '가', '을', '를', '도', '만', '에', '로']
+
+        def strip_particle(token: str) -> str:
+            base = token
+            for suffix in particles:
+                if base.endswith(suffix) and len(base) > len(suffix) + 1:
+                    base = base[: -len(suffix)]
+                    break
+            return base
+
+        for token in tokens:
+            if len(token) < 2:
+                continue
+            if token in stopwords:
+                continue
+            for candidate in [token, strip_particle(token)]:
+                if len(candidate) < 2 or candidate in stopwords:
+                    continue
+                if candidate not in anchors:
+                    anchors.append(candidate)
+            if len(anchors) >= 6:
+                break
+        return anchors
+
+    @classmethod
+    def _phase1_ack_has_user_anchor(cls, ack: str, user_message: str) -> bool:
+        anchors = cls._phase1_ack_anchor_tokens(user_message)
+        if not anchors:
+            return False
+        normalized_ack = ' '.join(str(ack or '').split())
+        return any(anchor in normalized_ack for anchor in anchors)
+
+    @classmethod
+    def _phase1_build_ack_fallback(cls, *, current_slot: str, user_message: str) -> str:
+        topic = cls._phase1_extract_transition_topic(user_message, max_len=34)
+        if topic and any(token in topic for token in ['고민', '불안', '중요', '원해', '선호', '힘들', '원하는', '느껴', '싶']):
+            return f'{topic}라는 맥락이 분명하게 전해졌어요.'
+        slot_label = cls._phase1_slot_label(current_slot)
+        if slot_label:
+            return f'{slot_label}에 대한 생각이 선명하게 느껴졌어요.'
+        return '말씀하신 흐름이 잘 이해됐어요.'
+
+    @staticmethod
+    def _phase1_latest_assistant_text(messages: list[dict[str, Any]]) -> str:
+        for msg in reversed(messages):
+            if str(msg.get('role', '')).strip() != 'assistant':
+                continue
+            content = ' '.join(str(msg.get('content', '')).split()).strip()
+            if content:
+                return content
+        return ''
+
+    @staticmethod
+    def _phase1_clean_single_sentence(text: str, *, max_len: int = 90) -> str:
+        value = ' '.join(str(text or '').split()).strip()
+        if not value:
+            return ''
+        value = re.sub(r'[\"“”\'`]', '', value).strip()
+        value = value.split(' 예:')[0].strip()
+        value = re.sub(r'\s+', ' ', value).strip()
+        if len(value) > max_len:
+            value = value[:max_len].rstrip()
+        if value and value[-1] not in '.!?':
+            value = f'{value}.'
+        return value
+
+    @staticmethod
+    def _phase1_extract_question_from_fallback(fallback_message: str, next_slot: str) -> str:
+        text = ' '.join(str(fallback_message or '').split()).strip()
+        if not text:
+            return ''
+        if ' 이어서 ' in text:
+            return text.split(' 이어서 ', 1)[1].strip()
+        if next_slot:
+            return TaskRunner._phase1_compact_question(next_slot)
+        return text
+
+    async def _phase1_generate_conversation_turn_message(
+        self,
+        *,
+        db: AsyncSession,
+        request: AiRunRequest,
+        run_id: UUID,
+        mode: str,
+        current_slot: str,
+        next_slot: str,
+        user_message: str,
+        previous_assistant: str,
+        fallback_message: str,
+        llm_ack: str,
+        missing_aspects: list[str],
+    ) -> tuple[str, Any | None]:
+        fallback_text = ' '.join(str(fallback_message or '').split()).strip()
+        if not fallback_text:
+            return '', None
+
+        target_question = self._phase1_extract_question_from_fallback(fallback_text, next_slot)
+        ack_seed = self._phase1_clean_single_sentence(llm_ack, max_len=80)
+        if (
+            not ack_seed
+            or self._phase1_is_generic_ack(ack_seed)
+            or not self._phase1_ack_has_user_anchor(ack_seed, user_message)
+        ):
+            ack_seed = self._phase1_build_ack_fallback(current_slot=current_slot, user_message=user_message)
+
+        payload = {
+            'mode': mode,
+            'current_slot': current_slot,
+            'next_slot': next_slot,
+            'latest_user_message': user_message,
+            'previous_assistant_message': previous_assistant,
+            'ack_seed': ack_seed,
+            'target_next_question': target_question,
+            'missing_aspects': [m for m in missing_aspects if str(m).strip()][:2],
+        }
+        try:
+            parsed, prompt_run = await self.openai_service.run_structured(
+                db=db,
+                session_id=request.session_id,
+                task_type=request.task_type,
+                run_id=run_id,
+                prompt_version=f'{request.prompt_version}:conversation',
+                output_model=Phase1ConversationalTurnOutput,
+                system_prompt=(
+                    'You rewrite one Korean interview turn naturally.\n'
+                    'Return strict JSON only.\n'
+                    'ack_sentence: exactly one empathetic Korean sentence that paraphrases a concrete user point.\n'
+                    'ack_sentence must not use process words like 정리/구조화/반영/항목/슬롯/체크.\n'
+                    'Do not copy long fragments verbatim from latest_user_message.\n'
+                    'next_question: exactly one Korean question sentence, aligned with target_next_question intent.\n'
+                    'Keep it concise and natural (no long checklist style).\n'
+                    'Do not include "예:" lists or parenthetical requirement lists.\n'
+                    'Avoid repetitive opener pattern "좋아요. ... 이어서 ... 알려주세요".\n'
+                    'If previous_assistant_message has similar wording, vary expression clearly.\n'
+                ),
+                input_json=payload,
+                mock_output_factory=lambda: {
+                    'ack_sentence': ack_seed,
+                    'next_question': target_question,
+                },
+                model_override=request.model_override,
+                timeout_sec=min(30.0, float(self.settings.openai_timeout_sec)),
+            )
+        except Exception:  # noqa: BLE001
+            return fallback_text, None
+
+        ack = self._phase1_clean_single_sentence(parsed.ack_sentence, max_len=90)
+        question = ' '.join(str(parsed.next_question or '').split()).strip()
+        question = question.split(' 예:')[0].strip()
+        question = re.sub(r'\([^)]*(예시|기준|요건|형태)[^)]*\)', '', question).strip()
+        if not question:
+            question = target_question
+        if question and question[-1] not in '?!':
+            question = f'{question}?'
+        if question.startswith('이어서 '):
+            question = question[4:].strip()
+        if not ack:
+            ack = ack_seed
+
+        candidate = f'{ack} {question}'.strip()
+        if (
+            not candidate
+            or self._phase1_is_repetitive_assistant_reply(candidate, previous_assistant)
+            or self._phase1_is_generic_ack(ack)
+            or not self._phase1_ack_has_user_anchor(ack, user_message)
+        ):
+            return fallback_text, prompt_run
+
+        return candidate, prompt_run
+
+    @classmethod
+    def _phase1_build_transition_to_next_question(
+        cls,
+        *,
+        current_slot: str,
+        user_message: str,
+        next_slot: str,
+        include_topic: bool,
+        llm_ack: str = '',
+    ) -> str:
+        next_question = cls._phase1_compact_question(next_slot)
+
+        ack = ' '.join(str(llm_ack or '').split()).strip()
+        ack = re.sub(r'[\"“”\'`]', '', ack).strip()
+        if ack:
+            if ack.endswith('?'):
+                ack = ''
+            if any(
+                token in ack
+                for token in [
+                    '사건 내용',
+                    '주요 타인 내용',
+                    '항목',
+                    '슬롯',
+                    '이어서',
+                    '정리',
+                    '구조화',
+                    '반영',
+                ]
+            ):
+                ack = ''
+            if ack and len(ack) < 8:
+                ack = ''
+            if ack and ack[-1] not in '.!?':
+                ack = f'{ack}.'
+        if not ack or cls._phase1_is_generic_ack(ack) or not cls._phase1_ack_has_user_anchor(ack, user_message):
+            ack = cls._phase1_build_ack_fallback(current_slot=current_slot, user_message=user_message)
+        return f'{ack} {next_question}'
 
     @staticmethod
     def _phase1_slot_guidance(slot_key: str) -> str:
