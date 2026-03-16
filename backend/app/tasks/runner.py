@@ -973,9 +973,10 @@ class TaskRunner:
                 '3) Across all personas, maximize alternative diversity. Avoid repeating the same title.\n'
                 '4) Keep title and tasks semantically consistent. Do not mix unrelated duties.\n'
                 '5) Avoid outdated labels. Prefer practical, modern pathway names.\n'
-                '6) Reflect user_profile (especially major_track/domain clues). '
-                'For graduate-school pathways, use natural domain-specific titles '
-                '(e.g., 공학 대학원 진학, 인문사회 연구 트랙).'
+                '6) Reflect user_profile (especially major_track/domain clues).\n'
+                '7) Include graduate-school pathways only when the user explicitly shows intent '
+                'for graduate study in their utterances/summary. '
+                'If explicit intent is absent, avoid graduate-school titles.'
             ),
             input_json={
                 'goal_query': goal_query,
@@ -3704,10 +3705,10 @@ class TaskRunner:
                     outlook_salary='사용자 경험 기반 의사결정 확대와 함께 수요가 지속되는 편',
                 ),
                 ExploreCard(
-                    job_title='대학원 진학(실무 연계형)',
-                    tasks='관심 주제 심화 연구와 프로젝트 포트폴리오를 병행',
-                    work_environment='대학원 연구실/산학 협력 과제 환경',
-                    outlook_salary='단기 수입은 제한될 수 있으나 전문성 자산 축적',
+                    job_title='심화 역량 프로젝트 트랙',
+                    tasks='관심 분야 문제를 선정해 실무형 프로젝트를 설계·완성',
+                    work_environment='온/오프라인 협업 프로젝트 환경',
+                    outlook_salary='프로젝트 실적이 쌓일수록 다음 기회로 연결되는 흐름',
                 ),
             ],
             [
@@ -3767,6 +3768,8 @@ class TaskRunner:
                 title = self._phase2_rewrite_legacy_title(title, tasks)
                 title = self._phase2_align_title_with_profile(title, user_profile or {})
                 title = self._phase2_refine_generic_title(title, tasks, user_profile or {})
+                if not title:
+                    continue
                 fp = self._phase2_card_fingerprint(title)
                 if fp in local_seen:
                     continue
@@ -3992,12 +3995,28 @@ class TaskRunner:
         }
         best_track, best_score = max(counts.items(), key=lambda item: item[1])
         top_count = list(counts.values()).count(best_score)
-        if best_score >= 1 and (top_count == 1 or best_score >= 2):
+        if best_score >= 2 and (top_count == 1 or best_score >= 3):
             major_track = best_track
+
+        grad_intent_keywords = [
+            '대학원',
+            '석사',
+            '박사',
+            '진학',
+            '연구실',
+            '학위',
+            '유학',
+            'graduate school',
+            'master',
+            'phd',
+        ]
+        lower_blob = text_blob.lower()
+        graduate_study_intent = any(keyword in lower_blob for keyword in grad_intent_keywords)
 
         return {
             'major_track': major_track,
             'keyword_counts': counts,
+            'graduate_study_intent': graduate_study_intent,
         }
 
     @staticmethod
@@ -4223,16 +4242,28 @@ class TaskRunner:
     def _phase2_align_title_with_profile(title: str, user_profile: dict[str, Any]) -> str:
         t = str(title or '').strip()
         track = str(user_profile.get('major_track') or '').strip()
-        if not t or track == 'unknown':
+        allow_grad_track = bool(user_profile.get('graduate_study_intent'))
+        if not t:
             return t
 
-        if '대학원' in t and not any(keyword in t for keyword in ['공학', '기술', '인문', '사회', '경영', '정책']):
+        if '대학원' in t and not allow_grad_track:
+            return ''
+
+        if (
+            allow_grad_track
+            and '대학원' in t
+            and track != 'unknown'
+            and not any(keyword in t for keyword in ['공학', '기술', '인문', '사회', '경영', '정책'])
+        ):
             if track == 'engineering':
                 return '공학/기술 분야 대학원 진학 트랙'
             if track == 'humanities':
                 return '인문사회 연구 중심 대학원 진학 트랙'
             if track == 'business':
                 return '경영/정책 융합 대학원 진학 트랙'
+
+        if track == 'unknown':
+            return t
 
         if track == 'humanities' and any(
             token in t for token in ['데이터 과학자', '머신러닝', 'AI 엔지니어', '소프트웨어 엔지니어']
