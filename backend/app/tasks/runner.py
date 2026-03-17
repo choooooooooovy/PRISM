@@ -2408,7 +2408,8 @@ class TaskRunner:
         if current_slot == 'physical_feelings' and any(token in text for token in ['잠', '수면', '두근', '심장', '긴장', '피곤', '피로', '소화']):
             add_unique('physical_feelings', '수면/긴장 등 신체 반응')
         if current_slot == 'events' and any(token in text for token in ['하라고', '권유', '압박', '강요', '시작', '상황', '계기']):
-            add_unique('events', text[:60])
+            # Keep full user event context instead of clipping, so review summaries don't look cut off.
+            add_unique('events', text)
         if current_slot.startswith('metacognition.'):
             meta = snapshot.get('metacognition') if isinstance(snapshot.get('metacognition'), dict) else {}
             subkey = current_slot.split('.', 1)[1]
